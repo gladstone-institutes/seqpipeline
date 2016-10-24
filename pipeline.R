@@ -1,20 +1,61 @@
 #!/usr/bin/env Rscript
 # This is an R script that manages the re-running of scripts for B2B
 
-options(stringsAsFactors=FALSE);
-options(error=recover)
+# Test command:
 
-VERBOSE       <- TRUE
-GLOBAL_ERRORS <- c("") # Problems are logged to this *GLOBAL* variable
+#   Rscript 0c_Analyze_kp_600_august_2016.R --type=RNA --info=test.rna --out=w.samples >| a.txt ; s a.txt
 
+cerr <- function(...) cat(paste0(..., "\n"), file=base::stderr()) # Print to STDERR
+cout <- function(...) cat(paste0(..., "\n"), file=base::stdout()) # Print to STDOUT
+
+suppressPackageStartupMessages(require("optparse"))
+
+if (!require("optparse")) {
+     stop("This scripts requires the 'optparse' library in R. Install it with: install.packages('optparse'). (Optparse is used to read command line arguments)")
+}
+
+require("edgeR")
+
+
+options(stringsAsFactors=FALSE)
+if (interactive()) { options(error=recover) } # <-- only when running interactively, or else 'stop' and 'stopifnot' fail to work.
+
+option_list <- list(
+     make_option(c("-v", "--verbose"), action="store_true", default=FALSE
+                 ,help="Print extra-verbose output")
+   , make_option(c("-t", "--type"), type="character", default=NULL
+                 ,help="REQUIRED. Specify the type of input: must be either --type=RNA or --type=CHIP. Case-insensitive.")
+   , make_option(c("-i", "--info"), type="character", default=NULL
+                 ,help="REQUIRED. Specify the 'info' filename with the matrix of metadata about each project.")
+
+   , make_option(c("-o", "--out"), type="character", default=NULL
+                ,help="REQUIRED. Specify an output file PREFIX for the generated commands.")
+)
+
+opt <- parse_args(OptionParser(option_list=option_list))
+
+opt$type <- toupper(opt$type) # upper-case it
+if (is.null(opt$out)) {  stop("[MISSING REQUIRED '--out=' ARGUMENT]: You must specify a prefix for your output files. For example, --out=my_samples . Thne, the per-sample files would be written as: my_samples.1.cmd.txt, my_samples.2.cmd.txt, etc...") }
+if (is.null(opt$type))    { stop("[MISSING REQUIRED '--type=' ARGUMENT]: Please specify an analysis type with the '--type=...' command line option. Valid options are: --type=RNA and --type=CHIP") }
+if (is.null(opt$info))    { stop("[MISSING REQUIRED '--info=' ARGUMENT]: The info filename (of the matrix of data about each project) must be specified with --info=FILENAME.") }
+
+if (is.null(opt$out)) {
+     cerr("[NOTE]: Since no file was specified (with --out), we are outputting all commands to STDOUT.")
+}
+
+#     opt$info      <- file.path(BASEDIR, "X.out.CHIP.3d_chipseq_first_entry_only_for_dupes.txt")
+#     opt$info      <- file.path(BASEDIR, "X.out.RNA.4a_with_manual_fixes.txt")
+
+GLOBAL_ERR <- c() # Problems are logged to this *GLOBAL* variable
+
+#system0             <- function(...) { print0("[SYSTEM CALL]: ", ...); if (GLOBAL_DRY_RUN) { print0("(Not run--this is a DRY RUN") } else { system(paste0(...))} }
 file.nonzero.exists <- function(f) { return (file.exists(f)&&file.info(f)$size>0) }
 is.nothing          <- function(x) { return (is.null(x) || is.na(x) || toupper(x) %in% c("NULL","N/A","NA","NONE","")) }
-print0              <- function(...) { print(paste0(...)) }
+print0              <- function(...) { cerr(paste0(...)) }
 statusPrint         <- function(...) { print0("[Status Update] ", ...); }
-verboseStatusPrint  <- function(...) { if (VERBOSE) { statusPrint(...); } }
-system0             <- function(...) { print0("[SYSTEM CALL]: ", ...); if (GLOBAL_DRY_RUN) { print0("(Not run--this is a DRY RUN") } else { system(paste0(...))} }
-errlog              <- function(..., fatal=FALSE) { msg<-paste0(...); print0(msg); warning(msg); GLOBAL_ERRORS <<- append(GLOBAL_ERRORS, msg); if (fatal) { stop(msg); } }
-warnlog             <- function(...) { msg<-paste0(...); print0(msg); warning(msg); GLOBAL_ERRORS <<- append(GLOBAL_ERRORS, msg); }
+verboseStatusPrint  <- function(...) { if (opt$verbose) { statusPrint(...); } }
+errlog              <- function(..., fatal=FALSE) { msg<-paste0(...); print0(msg); warning(msg); GLOBAL_ERR <<- append(GLOBAL_ERR, msg); if (fatal) { stop(msg); } }
+warnlog             <- function(...) { msg<-paste0(...); print0(msg); warning(msg); GLOBAL_ERR <<- append(GLOBAL_ERR, msg); }
 die_if_file_missing <- function(f, ...) {
      if(!file.exists(f)) {
           errlog("[Fatal error: missing file}: ", f, " ", ..., fatal=T)
@@ -23,7 +64,6 @@ die_if_file_missing <- function(f, ...) {
      return(TRUE);
 }
      
-
 get_exe_path <- function(exe_name, how_to_install=NULL) {
      if (is.null(exe_name) || is.na(exe_name)) { return(NA); }
      result = tryCatch({
@@ -39,13 +79,14 @@ get_exe_path <- function(exe_name, how_to_install=NULL) {
 }
 
 write_global_errors_to_file <- function(filename) {
-     fileConn <- file(ERR_LOG_FILE, open="w") # write to new file
-     writeLines(GLOBAL_ERRORS, fileConn)
+     # We have stored all the problems encountered into a list of strings named "GLOBAL_ERR" (global variable)
+     # Now we will write all of these to a file.
+     fileConn <- file(filename, open="w") # write to new file
+     writeLines(GLOBAL_ERR, fileConn)
      close(fileConn)
 }
 
-
-record_exid_failure <- function(exid_that_failed, comment="") {
+remember_exid_failure <- function(exid_that_failed, comment="") {
      FAILED_IDS[[exid]] <<- comment # GLOBAL VARIABLE
      errlog("[", exid, " ERROR]: ", comment)
 }
@@ -64,7 +105,7 @@ get_java_and_jar_path <- function(jar_full_path, gigabytes_ram) {
 
 # This script does the following:
 #      * Generates a file (ALIGN_CMD_FILE) with the qsub commands for running bowtie/tophat alignments on all relevant input files
-#      * Generates a file (COMMANDS_FILE) with the downstream a qsub commands for running bowtie/tophat alignments on all relevant input files
+#      * Generates a file (opt$out) with the downstream a qsub commands for running bowtie/tophat alignments on all relevant input files
 #              * Also adds to this file the HTSEQ commands for counting reads.
 #              * For CHIP-seq, also adds the 'gem' commands
 
@@ -74,68 +115,54 @@ get_java_and_jar_path <- function(jar_full_path, gigabytes_ram) {
 # Sample input file:
 # X.out.RNA.4a_with_manual_fixes.txt
 
-#INFILE <- "ZZZZ_TEST.txt" ; warning("USING A FAKE INPUT FILE")
-
-software.list <- list("Tophat (splice-aware aligner)"                              =list(exe="tophat",      version="2.1.1" ,install="See details at: http://ccb.jhu.edu/software/tophat/index.shtml")
-                    , "Bowtie (non-spliced aligner)"                               =list(exe="bowtie2",     version="2.2.4" ,install="See details at: http://bowtie-bio.sourceforge.net/index.shtml")
-                    , "BCP (ChIP-seq peak caller for everything except TF binding)"=list(exe="BCP_HM",      version="1.1"   ,install="Available at https://cb.utdallas.edu/BCP/", install_comment="Paper: http://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1002613")  # There are two versions of BCP - BCP_TF and BCP_HM. The latter is for histone marks - what you are interested in. BCP takes bed files as input.
-                    , "GEM (motif-aware ChIP-seq peak caller for TF binding sites)"=list(exe="gem.jar",     version="2.5"   ,install="See instructions at: http://groups.csail.mit.edu/cgs/gem/", install_comment="We were using version 2.5, but version 2.7+ is available now.")
-                    , "htseq-count (reads -> gene-level counts)"                   =list(exe="htseq-count", version="0.6.0" ,install="pip2.7 install HTseq", install_comment="Note: must be installed via pip (or other package manager). Do not just copy the binaries--it will not work.")
-                    , "samtools"                                                   =list(exe="samtools",    version="1.3"   ,install="yum install samtools (on Redhat/CentOS)", install_comment="Available through your package manager. Other examples: brew install samtools (Mac Homebrew), apt-get install samtools (Ubuntu)")
-                    , "edgeR (R library for differential expression)"              =list(exe=NA,            version="3.14.0",install="source('https://bioconductor.org/biocLite.R'); biocLite('edgeR')", install_comment="Available through Bioconductor.")
-                    , "java"                                                       =list(exe="java"       , version="1.8.0" ,install="Install via package manager or on Oracle's web site: https://java.com/en/", install_comment="May also be possible to install using your package manager (e.g. 'yum install java'). Java is required to run 'gem.jar' and 'MarkDuplicates.jar'")
+software.list <- list("Tophat (splice-aware aligner)"                              =list(exe="tophat"     , version="2.1.1"        ,install="See details at: http://ccb.jhu.edu/software/tophat/index.shtml")
+                    , "Bowtie (non-spliced aligner)"                               =list(exe="bowtie2"    , version="2.2.4"        ,install="See details at: http://bowtie-bio.sourceforge.net/index.shtml")
+                    , "bwa (non-splice/transcript-aware alinger)"                  =list(exe="bwa"        , version="0.7.12-r1039" ,install="See details at: http://bio-bwa.sourceforge.net/")
+                    , "java"                                                       =list(exe="java"       , version="1.8.0"        ,install="Install via package manager or on Oracle's web site: https://java.com/en/", install_comment="May also be possible to install using your package manager (e.g. 'yum install java'). Java is required to run 'gem.jar' and 'MarkDuplicates.jar'")
+                    , "BCP (ChIP-seq peak caller for everything except TF binding)"=list(exe="BCP_HM"     , version="1.1"          ,install="Available at https://cb.utdallas.edu/BCP/", install_comment="Paper: http://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1002613")  # There are two versions of BCP - BCP_TF and BCP_HM. The latter is for histone marks - what you are interested in. BCP takes bed files as input.
+                    , "GEM (motif-aware ChIP-seq peak caller for TF binding sites)"=list(exe="gem.jar"    , version="2.5"          ,install="See instructions at: http://groups.csail.mit.edu/cgs/gem/", install_comment="We were using version 2.5, but version 2.7+ is available now.")
+                    , "htseq-count (reads -> gene-level counts)"                   =list(exe="htseq-count", version="0.6.0"        ,install="pip2.7 install HTseq", install_comment="Note: must be installed via pip (or other package manager). Do not just copy the binaries--it will not work.")
+                    , "samtools"                                                   =list(exe="samtools"   , version="1.3"          ,install="yum install samtools (on Redhat/CentOS)", install_comment="Available through your package manager. Other examples: brew install samtools (Mac Homebrew), apt-get install samtools (Ubuntu)")
+                    , "edgeR (R library for differential expression)"              =list(exe=NA           , version="3.14.0"       ,install="source('https://bioconductor.org/biocLite.R'); biocLite('edgeR')", install_comment="Available through Bioconductor.")
                     #, "test"=list(exe="testfdsafsda")
                       )
 
-print0("------------------------------")
-print0("Required software:")
+cerr("------------------------------")
+cerr("Required software:")
 for (desc in names(software.list)) {
      details <- software.list[[desc]]
-     print0(desc)
+     cerr(desc)
      SPACER <- "     "
-     print0(SPACER, "Executable name: ", details$exe, " (version ", details$version, ")")
-     print0(SPACER, SPACER, "To install: ", details$install)
-     if (!is.null(details$install_comment)) { print0(SPACER, SPACER, "            (", details$install_comment, ")") }
+     cerr(SPACER, "Executable name: ", details$exe, " (version ", details$version, ")")
+     cerr(SPACER, SPACER, "To install: ", details$install)
+     if (!is.null(details$install_comment)) { cerr(SPACER, SPACER, "            (", details$install_comment, ")") }
 }
-print0("------------------------------")
+cerr("------------------------------")
 
 for (desc in names(software.list)) {
      details <- software.list[[desc]]
      get_exe_path(details$exe, paste0("How to install: ", details$install))
 }
 
-require("edgeR")
-
-
-# ============= Mark duplicates =============
-#MARK_DUP_JAR = "/data/applications/picard/picard-tools-1.114/MarkDuplicates.jar";
-#dedup_cmd = paste(JAVA_EXE, " -Xmx15g -jar ", MARK_DUP_JAR, " INPUT=", finalbam, " REMOVE_DUPLICATES
-# Note: although the above command RUNS the mark-duplicates command, it doesn't REMOVE duplicates---it just marks them
-
-ASSAY_TYPE <- "RNASEQ"
-#ASSAY_TYPE <- "CHIPSEQ"
 
 BASEDIR <- getwd()
 
-COMMANDS_FILE <- file.path(BASEDIR, "D1b_followup_commands_autogenerated.txt")
-ALIGN_CMD_FILE = "D1a_alignment_commands_autogenerated.txt"
+ALIGN_CMD_FILE <- "D1a_alignment_commands_autogenerated.txt"
 
 SHOULD_USE_FAKE_SIMULATED_DATA <- FALSE   # Should we use fake simulated data? Set to TRUE to not use real files
 SIM_STATUS                     <- ifelse(SHOULD_USE_FAKE_SIMULATED_DATA, "--FAKE_SIMULATED_DATA--", "")
 
-ERR_LOG_FILE  <- file.path(BASEDIR, "Z.errors.txt") # <-- print the GLOBAL_ERRORS variable to this file afterward
+ERR_LOG_FILE  <- file.path(BASEDIR, "Z.errors.txt") # <-- print the GLOBAL_ERR variable to this file afterward
 
 FAILED_IDS    <- list()
 OK_IDS        <- list()
+GEM_RAM_GB    <- 25  # in gigabytes. Sometimes crsahes if it's < 10
 
-
-GEM_RAM_GB <- 25  # in gigabytes. Sometimes crsahes if it's < 10
-
-GLOBAL_DRY_RUN     <- TRUE
-SAMTOOLS_EXE       <- get_exe_path("samtools")
-TOPHAT_N_THREADS   <- 4
-BOWTIE_N_THREADS   <- 4
-SAMTOOLS_N_THREADS <- 4
+GLOBAL_DRY_RUN                <- TRUE
+SAMTOOLS_EXE                  <- get_exe_path("samtools")
+TOPHAT_N_THREADS              <- 4
+BOWTIE_N_THREADS              <- 4
+SAMTOOLS_N_THREADS            <- 4
 COMMENT_OUT_SHELL_COMMAND_STR <- "##### "
 
 GLOBAL_QSUB_COUNT <- 1 # 
@@ -150,17 +177,34 @@ OUT_BCP_DIR        <- file.path(BASEDIR, "F1b_chipseq_bcp")
 
 NA_STRINGS         <- c("NA","na","NULL","null","N/A","n/a")
 
-clear_out_file <- function(filename) { connection <- file(COMMANDS_FILE, open="w"); close(connection); stopifnot(file.exists(filename)); }
+clear_file  <- function(filename) {
+     if (!is.null(filename)) {
+          connection <- file(filename, open="w")
+          close(connection)
+          stopifnot(file.exists(filename))
+     } else {
+          # do nothing
+     }
+     invisible(NULL) # prevent R from printing NULL to the console if there is no action taken
+}
+
 append_commands <- function(filename, lines, commented_out=FALSE) {
-     connection <- file(COMMANDS_FILE, open="a");
+     # If filename is null, writes to STDOUT
      if (commented_out) { lines <- paste("### ", lines) } # should we actually print these as COMMENTED OUT lines?
-     writeLines(lines, connection);
-     close(connection);
+     if (is.null(filename)) {
+          writeLines(lines, stdout())
+     } else {
+          connection <- file(filename, open="a")
+          writeLines(lines, connection);
+          close(connection)
+     }
+     invisible(NULL) # prevent R from printing NULL to the console if there is no action taken
 }
 
 read_sample_info_from_file <- function(filename) {
+     if (!file.exists(filename)) { stop(paste0("[ERROR: Missing input sample data file]: The input sample data file could NOT be found. Please make sure you specified the FULL PATH to it if you're running this on a cluster, and double check the '--info=FILENAME' option on the command line. The inaccessible file was specified at the following (seemingly nonexistent or inaccessible to this user) path: ", filename)) }
      REQUIRED_COLUMN_NAMES <- c("species", "file1", "file2", "proj_type", "expr_group", "chip_input", "pubtype") # These must all be the headers in 'filename'. Additional columns are ALLOWED.
-     statusPrint("Reading the 'all' data matrix from input file ", INFILE)
+     statusPrint("Reading the 'all' data matrix from input file ", filename)
      dall     <- read.table(filename, sep="\t", header=T, row.names=1, na.strings=NA_STRINGS)
      exid.vec <- gsub("X.*", "R", rownames(dall), perl=T, ignore.case=T) # full experiment ID. So for example, an sample ID might be "399X2". But the actual EXPERIMENT id there is "399R." In other words: take off the "X" and everything beyond, and add R
      missing_headers.vec <- REQUIRED_COLUMN_NAMES[!(REQUIRED_COLUMN_NAMES %in% colnames(dall))]
@@ -246,7 +290,6 @@ agw_get_annotation <- function(assembly, file_type, must_exist=TRUE) {
 }
 
 agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
-     stopifnot(aligner %in% c("bowtie","tophat"))	
      die_if_file_missing(fq1, "[ERR]: Input FASTQ file ", fq1, " (forward (pair 1) and/or unpaired) seems to be missing!")
      (is.nothing(fq2) || die_if_file_missing(fq2, "[ERR]: Input FASTQ file ", fq2, " (#2, reverse pair file) seems to be missing!"))
 
@@ -260,7 +303,7 @@ agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
      filtered_final_bam    <- file.path(outdir, "accepted_hits.bam")
 
      cmd <- paste0("mkdir -p ", outdir)
-     if (aligner=="tophat") {
+     if (aligner %in% c("tophat", "tophat2")) {
           gtf      <- agw_get_annotation(species, "gtf")    # <-- only actually used by tophat
           pair2Str <- ifelse(isPaired, yes=paste0(" ", fq2), no="") # might be blank, if unpaired input
           cmd <- paste0(cmd, "\n"
@@ -268,12 +311,12 @@ agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
                       , " --min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
                       , " --GTF=", gtf, " --num-threads=", TOPHAT_N_THREADS, " ", innerDistStr, " ", btie, " ", fq1, " ", pair2Str)
           
-     } else if (aligner == "bowtie") {
+     } else if (aligner %in% c("bowtie","bowtie2")) {
           inputFqString <- ifelse(isPaired, yes=paste0(" -1 ", fq1," -2 ", fq2), no=paste0(" -U ", fq1))
           cmd <- paste0(cmd, "\n"
                       , get_exe_path('bowtie2'), " --threads=", BOWTIE_N_THREADS, " -x ", btie, " ", inputFqString
                       , " | " , SAMTOOLS_EXE, " view -@ ", SAMTOOLS_N_THREADS, " -b -                            > ", all_reads_bam
-                      , " && ", SAMTOOLS_EXE, " view -@ ", SAMTOOLS_N_THREADS, " -b -F 0x104 ", everythingbam, " > ", filtered_final_bam)
+                      , " && ", SAMTOOLS_EXE, " view -@ ", SAMTOOLS_N_THREADS, " -b -F 0x104 ", all_reads_bam, " > ", filtered_final_bam)
           warning("are these position sorted? I think they are not")
           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
      } else {
@@ -425,14 +468,14 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
      append_commands(cmdfile, agw_construct_cmd(paste0("mkdir -p ", outdir)))
      edgerOut <- file.path(outdir, paste0("edgeR_differential_expression_", exid, "", SIM_STATUS, ".tsv.txt"))
      if (smallest_num_replicates < 2) {
-          record_exid_failure(exid, "No replicates, skip this comparison FOR NOW ONLY.")
+          remember_exid_failure(exid, "No replicates, skip this comparison FOR NOW ONLY.")
      } else if (!all(sapply(count_filenames.vec, file.nonzero.exists))) {
-          record_exid_failure(exid, "EDGER IS MISSING SOME HTSEQ INPUT FILES for that experiment ID so we are skipping this differential expression.")
+          remember_exid_failure(exid, "EDGER IS MISSING SOME HTSEQ INPUT FILES for that experiment ID so we are skipping this differential expression.")
      } else if (file.exists(edgerOut)) {
           errlog(exid, " Looks like the edgeR out ALREADY EXISTS for experiment ID ", exid, ", in the location <", edgerOut, "> so we will not be re-running it.")
           OK_IDS[[exid]] <- "OK" # we (probably) did this properly
      } else if (length(count_filenames.vec) != length(df$expr_group)) {
-          record_exid_failure(exid, paste0("missing input files for experiment ", exid, ": The number of 'count filenames' is NOT equal to the length of the group vector. This means some experimental groups were not aligned and/or processed downstream."))
+          remember_exid_failure(exid, paste0("missing input files for experiment ", exid, ": The number of 'count filenames' is NOT equal to the length of the group vector. This means some experimental groups were not aligned and/or processed downstream."))
           FAILED_IDS[[exid]] <- 1
      } else {
           print0("Running EdgeR for experiment ", exid, "...")
@@ -472,7 +515,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
           } else {
                edgerOut <- paste0(edgerOut, "--FAILED-TO-GENERATE-RESULTS.txt")
                write.table(c("no results generated"), file=edgerOut)
-               record_exid_failure(exid, "Warning: did not find any group comparisons for this experiment! This may be a programming error (?) or it may be due to unusual input data.")
+               remember_exid_failure(exid, "Warning: did not find any group comparisons for this experiment! This may be a programming error (?) or it may be due to unusual input data.")
           }
           print0("Wrote results to the output file <", edgerOut, ">")
           #topTags(et)
@@ -484,11 +527,11 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
 }
 
 agw_handle_rna_counting_per_feature <- function(exid, sid, species, cmdfile) {
-     bam <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
-     gtf <- agw_get_annotation(species, "gtf"); stopifnot(file.nonzero.exists(gtf))
+     bam    <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
+     gtf    <- agw_get_annotation(species, "gtf"); stopifnot(file.nonzero.exists(gtf))
      ccc    <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"path"
      cccDir <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"dir"
-     print0("Validating that counts file <", ccc, "> exists for sample ", sid)
+     cerr("Validating that counts file <", ccc, "> exists for sample ", sid)
      #htCmd <- paste0("mkdir -p ", cccDir, "; ", HTSEQ_COUNT_EXE, " --format=bam --order=pos --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id ", bam, " ", gtf, " >| ", ccc)
      bamNameSorted <- paste0(bam, ".sorted_by_name.bam")
      htCmd <- paste0("mkdir -p ", cccDir, "; ", SAMTOOLS_EXE, " sort -n ", bam, " > ", bamNameSorted, " && ", get_exe_path('htseq-count'), " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id ", bamNameSorted, " ", gtf, " >| ", ccc)
@@ -529,41 +572,52 @@ agw_handle_chip_peak_calls <- function(exid, sid, df_for_this_exid, cmdfile) {
      }
 }
 
-# =====================  DONE WITH FUNCTIONS ==========================
+# =====================  DONE WITH FUNCTION DEFINITIONS ==========================
 
 #MARK_DUP_JAR = "/data/applications/picard/picard-tools-1.114/MarkDuplicates.jar";
-if (ASSAY_TYPE == "CHIPSEQ") {
-     INFILE      <- file.path(BASEDIR, "X.out.CHIP.3d_chipseq_first_entry_only_for_dupes.txt")
+if (opt$type %in% c("CHIP")) {
      BAM_DIR     <- file.path(BASEDIR, "D2b_bowtie_output")
      ALIGNED_DIR <- file.path(getwd(), "D2b_bowtie_output")
      ALIGNER     <- "bowtie2"
-} else if (ASSAY_TYPE == "RNASEQ") {
-     INFILE      <- file.path(BASEDIR, "X.out.RNA.4a_with_manual_fixes.txt")
+} else if (opt$type %in% c("RNA")) {
      BAM_DIR     <- file.path(BASEDIR, "D2a_tophat_output")
      ALIGNED_DIR <- file.path(getwd(), "D2a_tophat_output")
      ALIGNER     <- "tophat"
 } else {
-     stop("unrecognized assay type")
+     stop(paste0("invalid assay type. On the command line, the assay type was specified as '--type=", opt$type, "' -- however, the only valid types currently are 'RNA' and 'CHIP'. Please specify one of those valid options!"))
 }
 
-clear_out_file(COMMANDS_FILE)
-append_commands(COMMANDS_FILE, "echo 'Starting the set of commands for this specific input file'")
 
-statusPrint("Reading the 'all' data matrix from input file ", INFILE)
-alldat      <- read_sample_info_from_file(INFILE)
 
-append_commands(COMMANDS_FILE, "echo '[DONE] with the commands for this specific input file'")
+
+#stop("truefinder")
+
+
+
+alldat      <- read_sample_info_from_file(opt$info)
+
 
 #for (exid in "24R") { # unique(dat[,"exid"])) {
+counter <- 0
+max_counter <- length(get_unique_experiment_ids_from_b2frame(alldat))
 for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
+     counter <- counter+1
+
+     file_safe_exid    <- make.names(gsub("[:;, ]", "_", exid)) # make this exid safe for use in a filename
+     zero_padded_count <- sprintf(paste0("%0", floor(log10(max_counter)+1),"d"), counter) # <-- try to calculate the right number of zeros to pad with. e.g. if the max is "999", then pad to a total of at least 3 digits (001, 002, etc...)
+     xout              <- paste0(opt$out, ".", zero_padded_count, ".", file_safe_exid, ".cmd.txt")     # <-- the output filename
+
+     clear_file(xout) # Clear out the output file before we write to it, in case it already exists...
+     append_commands(xout, paste0("echo 'Handling the experiment ID ", file_safe_exid, "'. This file contains the commands for ONLY that specific experiment ID"))
+     
      subdat                      <- get_b2frame_for_exid_from_b2frame(alldat, exid)
      sample_ids_for_exid.vec     <- get_sids_for_exid_from_b2frame(df=subdat, experiment_id=exid)
      species                     <- get_species_from_b2frame(subdat)
-     print0("Handling experiment ", exid, " (", species, "). The full set of data for this experiment is:"); print(subdat)
+     cerr("Handling experiment ", exid, " (", species, "). The full set of data for this experiment is:"); cerr(subdat)
      f1.vec <- subdat[["file1"]]
      f2.vec <- subdat[["file2"]]
 
-     # handle the alignments
+     # Handle the alignments
      for (ridx in seq_along(rownames(subdat))) {
           item      <- rownames(subdat)[ridx] # item name (unique)
           exid      <- subdat[ridx,    "exid"]  # experiment ID (shared)
@@ -574,7 +628,7 @@ for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
           paired2   <- if (is.nothing(file2)) { NULL } else { file.path(BASEDIR, file2) }
           outdir    <- file.path(ALIGNED_DIR, exid, item)
           align_cmd <- agw_align(exid=exid, fq1=paired1, fq2=paired2, outdir=outdir, aligner=aligner)
-          append_commands(COMMANDS_FILE, align_cmd) # align it!
+          append_commands(xout, align_cmd) # align it!
      }
      
      exid_is_missing_a_sample <- FALSE
@@ -591,25 +645,23 @@ for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
                write.table(df, file=f, col.names=FALSE, quote=FALSE, row.names=T, sep="\t")
           }
      } else {
-          # Get real data
-          count_filenames.vec <- c()
+          count_filenames.vec <- c() # Get real data
           for (sid in sample_ids_for_exid.vec) {
                bam <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
                if (!file.nonzero.exists(bam)) {
                     errlog("[", exid, " FAILURE]: [MISSING BAM FILE in experiment ID ", exid, ", sample ID ", sid, ". Specifically, file <", bam, "> does not exist.")
                     exid_is_missing_a_sample <- TRUE
                } else {
-                    if      (ASSAY_TYPE == "RNASEQ" ) { agw_handle_rna_counting_per_feature(exid=exid, sid=sid, species=species, cmdfile=COMMANDS_FILE) }
-                    else if (ASSAY_TYPE == "CHIPSEQ") { agw_handle_chip_peak_calls(exid=exid, sid=sid, df_for_this_exid=subdat, cmdfile=COMMANDS_FILE) }
-                    else { stop("incorrect assay type") }
+                    if      (opt$type %in% c("RNA") ) { agw_handle_rna_counting_per_feature(exid=exid, sid=sid, species=species, cmdfile=xout) }
+                    else if (opt$type %in% c("CHIP")) { agw_handle_chip_peak_calls(exid=exid, sid=sid, df_for_this_exid=subdat, cmdfile=xout) }
+                    else                              { stop(paste0("Unrecognized assay type, specifically: ", opt$type)) }
                }
           }
-
           if (exid_is_missing_a_sample) {
-               record_exid_failure(exid, paste0("[SKIPPING all remaining analysis steps for experiment ID ", exid, " due to a missing file issue earlier. See the logs for the exact sample ID that was missing."))
+               remember_exid_failure(exid, paste0("[SKIPPING all remaining analysis steps for experiment ID ", exid, " due to a missing file issue earlier. See the logs for the exact sample ID that was missing."))
           } else {
-               if (ASSAY_TYPE == "RNASEQ") {
-                    agw_handle_rna_diff_expression(exid, sid, subdat, outdir=file.path(OUT_EDGER_DIR, exid), cmdfile=COMMANDS_FILE)
+               if (opt$type == "RNASEQ") {
+                    agw_handle_rna_diff_expression(exid, sid, subdat, outdir=file.path(OUT_EDGER_DIR, exid), cmdfile=xout)
                }
           }
           #browser()
@@ -618,15 +670,17 @@ for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
 
 write_global_errors_to_file(filename=ERR_LOG_FILE)
 
-print("---------------")
-print(GLOBAL_ERRORS, collapse="\n")
-print("---------------")
-if (length(FAILED_IDS) > 0) {
-     print0("ERROR: Failure for the following ", length(FAILED_IDS), " experiment IDs:")
-     print(paste(names(FAILED_IDS), collapse=", "))
-} else {
-     print0("[OK] Commands were successfully written for every ID.")
+if (length(GLOBAL_ERR) > 0) {
+     cerr("[ERROR] We encountered the following ", length(GLOBAL_ERR), " error messages:")
+     cerr(paste(GLOBAL_ERR, collapse="\n"))
+     cerr("---------------")
 }
-print0("Appeared to succeed with the following ", length(OK_IDS), " experiment IDs:")
-print(paste(names(OK_IDS), collapse=", "))
-print("---------------")
+if (length(FAILED_IDS) > 0) {
+     cerr("[ERROR] Failure for the following ", length(FAILED_IDS), " experiment IDs:")
+     cerr(paste(names(FAILED_IDS), collapse=", "))
+ } else {
+     cerr("[OK] Commands were successfully written for every ID.")
+}
+cerr("[OK] with the following ", length(OK_IDS), " experiment IDs:")
+cerr(paste(names(OK_IDS), collapse=", "))
+cerr("---------------")
