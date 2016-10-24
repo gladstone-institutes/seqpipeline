@@ -19,7 +19,13 @@ Bowtie (non-spliced aligner)
 BCP (ChIP-seq peak caller for everything except TF binding)
 *     Executable name: BCP_HM (version 1.1)
      *     To install: Available at https://cb.utdallas.edu/BCP/
-                      (Paper: http://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1002613)
+                      (Paper: http://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1002613 )
+
+bam2bed (Part of the 'bedops' suite. Converts BAM regions to BED files.)
+*     Executable name: bam2bed (version 2.4.20)
+     *     Note: This program is required only for running BCP in the CHIPseq pipeline--nothing else uses it.
+     *     To install: Available here: http://bedops.readthedocs.io/en/latest/content/installation.html
+                      (Paper: http://bioinformatics.oxfordjournals.org/content/28/14/1919.abstract )
 
 GEM (motif-aware ChIP-seq peak caller for TF binding sites)
 *     Executable name: gem.jar (version 2.5)

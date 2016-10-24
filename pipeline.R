@@ -1,9 +1,22 @@
 #!/usr/bin/env Rscript
 # This is an R script that manages the re-running of scripts for B2B
 
-# Test command:
+# Required R packages:
+#       * optparse (option parsing) library. Available in CRAN
+#         Install it by typing this in R:   install.packages('optparse')
 
-#   Rscript 0c_Analyze_kp_600_august_2016.R --type=RNA --info=test.rna --out=w.samples >| a.txt ; s a.txt
+
+
+# by Alex Williams
+
+# How to use it:
+
+# Example usage:
+#   Rscript   this_b2b_script_name.R   --type=RNA   --info=sample_info.rna.txt  --out=w.samples
+
+# Or:
+#   Rscript   this_b2b_script_name.R   --type=CHIP  --info=sample_info.chip.txt  --out=chip.samples
+
 
 cerr <- function(...) cat(paste0(..., "\n"), file=base::stderr()) # Print to STDERR
 cout <- function(...) cat(paste0(..., "\n"), file=base::stdout()) # Print to STDOUT
@@ -31,17 +44,12 @@ option_list <- list(
    , make_option(c("-o", "--out"), type="character", default=NULL
                 ,help="REQUIRED. Specify an output file PREFIX for the generated commands.")
 )
-
 opt <- parse_args(OptionParser(option_list=option_list))
 
-opt$type <- toupper(opt$type) # upper-case it
-if (is.null(opt$out)) {  stop("[MISSING REQUIRED '--out=' ARGUMENT]: You must specify a prefix for your output files. For example, --out=my_samples . Thne, the per-sample files would be written as: my_samples.1.cmd.txt, my_samples.2.cmd.txt, etc...") }
-if (is.null(opt$type))    { stop("[MISSING REQUIRED '--type=' ARGUMENT]: Please specify an analysis type with the '--type=...' command line option. Valid options are: --type=RNA and --type=CHIP") }
-if (is.null(opt$info))    { stop("[MISSING REQUIRED '--info=' ARGUMENT]: The info filename (of the matrix of data about each project) must be specified with --info=FILENAME.") }
-
-if (is.null(opt$out)) {
-     cerr("[NOTE]: Since no file was specified (with --out), we are outputting all commands to STDOUT.")
-}
+opt$type <- toupper(opt$type) # upper-case the analysis assay type ("rna" --> "RNA")
+if (is.null(opt$out))  { stop("[MISSING REQUIRED '--out=' ARGUMENT]: You must specify a prefix for your output files. For example, --out=my_samples . Thne, the per-sample files would be written as: my_samples.1.cmd.txt, my_samples.2.cmd.txt, etc...") }
+if (is.null(opt$type)) { stop("[MISSING REQUIRED '--type=' ARGUMENT]: Please specify an analysis type with the '--type=...' command line option. Valid options are: --type=RNA and --type=CHIP") }
+if (is.null(opt$info)) { stop("[MISSING REQUIRED '--info=' ARGUMENT]: The info filename (of the matrix of data about each project) must be specified with --info=FILENAME.") }
 
 #     opt$info      <- file.path(BASEDIR, "X.out.CHIP.3d_chipseq_first_entry_only_for_dupes.txt")
 #     opt$info      <- file.path(BASEDIR, "X.out.RNA.4a_with_manual_fixes.txt")
@@ -59,9 +67,8 @@ warnlog             <- function(...) { msg<-paste0(...); print0(msg); warning(ms
 die_if_file_missing <- function(f, ...) {
      if(!file.exists(f)) {
           errlog("[Fatal error: missing file}: ", f, " ", ..., fatal=T)
-          return(FALSE);
      }
-     return(TRUE);
+     return(invisible(TRUE));
 }
      
 get_exe_path <- function(exe_name, how_to_install=NULL) {
@@ -84,11 +91,13 @@ write_global_errors_to_file <- function(filename) {
      fileConn <- file(filename, open="w") # write to new file
      writeLines(GLOBAL_ERR, fileConn)
      close(fileConn)
+     return(invisible(NULL))
 }
 
 remember_exid_failure <- function(exid_that_failed, comment="") {
      FAILED_IDS[[exid]] <<- comment # GLOBAL VARIABLE
      errlog("[", exid, " ERROR]: ", comment)
+     return(invisible(NULL))
 }
 
 
@@ -120,6 +129,7 @@ software.list <- list("Tophat (splice-aware aligner)"                           
                     , "bwa (non-splice/transcript-aware alinger)"                  =list(exe="bwa"        , version="0.7.12-r1039" ,install="See details at: http://bio-bwa.sourceforge.net/")
                     , "java"                                                       =list(exe="java"       , version="1.8.0"        ,install="Install via package manager or on Oracle's web site: https://java.com/en/", install_comment="May also be possible to install using your package manager (e.g. 'yum install java'). Java is required to run 'gem.jar' and 'MarkDuplicates.jar'")
                     , "BCP (ChIP-seq peak caller for everything except TF binding)"=list(exe="BCP_HM"     , version="1.1"          ,install="Available at https://cb.utdallas.edu/BCP/", install_comment="Paper: http://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1002613")  # There are two versions of BCP - BCP_TF and BCP_HM. The latter is for histone marks - what you are interested in. BCP takes bed files as input.
+                    , "bam2bed (part of the 'bedops' suite)"                       =list(exe="bam2bed"    , version="2.4.20"       ,install="Available here: http://bedops.readthedocs.io/en/latest/content/installation.html", install_comment="This program is required only for running BCP in the CHIPseq pipeline--nothing else uses it. Paper: http://bioinformatics.oxfordjournals.org/content/28/14/1919.abstract")
                     , "GEM (motif-aware ChIP-seq peak caller for TF binding sites)"=list(exe="gem.jar"    , version="2.5"          ,install="See instructions at: http://groups.csail.mit.edu/cgs/gem/", install_comment="We were using version 2.5, but version 2.7+ is available now.")
                     , "htseq-count (reads -> gene-level counts)"                   =list(exe="htseq-count", version="0.6.0"        ,install="pip2.7 install HTseq", install_comment="Note: must be installed via pip (or other package manager). Do not just copy the binaries--it will not work.")
                     , "samtools"                                                   =list(exe="samtools"   , version="1.3"          ,install="yum install samtools (on Redhat/CentOS)", install_comment="Available through your package manager. Other examples: brew install samtools (Mac Homebrew), apt-get install samtools (Ubuntu)")
@@ -343,7 +353,7 @@ agw_sample_is_an_input <- function(exid, sid, df) {
      return (grepl("^input", agw_get_chip_input_id(exid, sid, df), perl=T, ignore.case=T))
 }
 
-agw_get_gem_chipseq_cmd <- function(species, inputBam=NA, expBam, outPrefix) {
+agw_get_gem_chipseq_cmd <- function(species, ctlBam=NA, expBam, outPrefix) {
      # inputbam means; the INPUT file for chipseq. There MIGHT possibly not be one.
      # expbam is the (required) experimental bam file. 
      threads <- 1 # gem uses a ton of threads for some reason, so 1 is even conservative
@@ -353,10 +363,10 @@ agw_get_gem_chipseq_cmd <- function(species, inputBam=NA, expBam, outPrefix) {
      genomeByChromFastaDir <- agw_get_annotation(species, "fa_by_chrom")
      chrSizesFile          <- agw_get_annotation(species, "chr_sizes")
 
-     if (!is.nothing(inputBam) && !file.nonzero.exists(inputBam)) {
-          errlog("The missing BAM file we were looking for was named <<", inputBam, ">>. It was part of experiment with output prefix <", outPrefix, ">.")
-          return(paste0("echo 'failure for", inputBam, "'"))
-          #stopifnot(is.na(inputBam) || file.exists(inputBam))
+     if (!is.nothing(ctlBam) && !file.nonzero.exists(ctlBam)) {
+          errlog("The missing BAM file we were looking for was named <<", ctlBam, ">>. It was part of experiment with output prefix <", outPrefix, ">.")
+          return(paste0("echo 'failure for", ctlBam, "'"))
+          #stopifnot(is.na(ctlBam) || file.exists(ctlBam))
      }
      stopifnot(file.exists(expBam))
 
@@ -372,45 +382,48 @@ agw_get_gem_chipseq_cmd <- function(species, inputBam=NA, expBam, outPrefix) {
                     , " --g ", chrSizesFile
                     , " --genome ", genomeByChromFastaDir
                     , " --expt ", expBam
-                    , ifelse(is.na(inputBam), " ", paste0(" --ctrl ", inputBam))  # can be omitted if there is NO input file
+                    , ifelse(is.na(ctlBam), " ", paste0(" --ctrl ", ctlBam))  # can be omitted if there is NO input file
                     , " --f SAM --sl --outBED"
                     , " --out ", outPrefix) # outprefix creates a new folder with this name, respecting existing subdirectories
      return(agw_construct_cmd(gemCmd))
 }
 
-agw_get_bcp_chipseq_cmd <- function() {
+agw_get_bcp_chipseq_cmd <- function(species, ctlBam, expBam, outPrefix) {
 
-     # Attached is the manual for running BCP. There are two versions of BCP - BCP_TF and BCP_HM. The latter is for histone marks - what you are interested in. BCP takes bed files as input.
+     outPrefix <- gsub("[.](bam|sam|bed)$", "", outPrefix, ignore.case=T, perl=T) # remove any '.bam'/sam/bed from the end. Those are not correct suffixes. We will add the suffix ourselves
+     
+     # There are two versions of BCP - BCP_TF and BCP_HM. The latter is for histone marks - what you are interested in. BCP takes bed files as input.
+     # Note: BCP_HM has a very confusing help method: you specify "BCP_HM -h 1" for help. The "1" is mandatory.
      #This is an example command I ran on a sample of H3K4me3 data:
      #BCP_HM -1 /home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878H3k4me3StdAlnRep1.bed -2 /home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878ControlStdAlnRep1.bed -f 200 -w 200 -p 0.001 -3 GM12878_H3K4me3_Rep1_EncodeAlign_results001_HM.bed
-     
      #Note, there are changes to this command if you have Chip-exo data. You will need to replace  "Read_Distribution_default.txt" by "Read_Distribution_ChIP-exo.txt" and will need to add --smooth 3 option to the commas.
-     #-Reuben
-
-     # convert input
-     warning("we need to convert bam1 to bed1")
-     warning("we need to convert bam2 to bed2")
-     warning("we need to convert bam3 to bed3")
-     
+     # -Reuben
      #BCP_HM -1 /home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878H3k4me3StdAlnRep1.bed
      #       -2 /home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878ControlStdAlnRep1.bed
      #       -f 200 -w 200 -p 0.001 -3 GM12878_H3K4me3_Rep1_EncodeAlign_results001_HM.bed
-     bed1 <- "/home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878H3k4me3StdAlnRep1.bed"
-     bed2 <- "/home/rthomas/ChipSeqChallenge/RealData/HistoneData/Monkey/Results/04a.mapping/wgEncodeBroadHistoneGm12878ControlStdAlnRep1.bed"
-     bed3 <- "GM12878_H3K4me3_Rep1_EncodeAlign_results001_HM.bed"
-     f    <- 200
-     w    <- 200
-     p    <-   0.001
      
-     bcpCmd <- paste0(get_exe_path("BCP_HM")
-                      , " -1 ", bed1
-                      , " -2 ", bed2
-                      , " -f ", f
-                      , " -w ", w
-                      , " -p ", p
-                      , " -3 ", bed3)
-     stop("Not implemented")
-     return(agw_construct_cmd(bcpCmd))
+     # These are intermediate files. The problem is that bcp cannot deal with BAM files directly, so we have to convert them.
+     bed_exp <- "/04a.mapping/wgEncodeBroadHistoneGm12878H3k4me3StdAlnRep1.bed" # "The ChIP-seq data set you want to input."
+     bed_ctl <- "/wgEncodeBroadHistoneGm12878ControlStdAlnRep1.bed" # "The control/input data set you want to input."
+     
+     bam2bed_exp_cmd <- agw_construct_cmd(get_exe_path("bam2bed"), " --do-not-sort ", " < ", ctlBam, " > ", bed_exp)
+     bam2bed_ctl_cmd <- agw_construct_cmd(get_exe_path("bam2bed"), " --do-not-sort ", " < ", expBam, " > ", bed_ctl)
+     
+     fragment_size  <- 200  # "The fragment size to which we extend the reads in pre-processing data step. Default:200bp."
+     window_size    <- 200  # "The window size we apply the adjcaent window in pre-processing data step. Default:200bp."
+     p_cutoff       <- 1e-3 # The p_value you want to use for remove false positive based on control data. Range:1e-2---1e-6, default is 1e-3.
+     bed_out        <- paste0(outPrefix, ".bed") # The results data set with 5 columns you want to output.
+     
+     bcp_cmd <- agw_construct_cmd(get_exe_path("BCP_HM")
+                               , " -1 ", bed_exp
+                               , " -2 ", bed_ctl
+                               , " -f ", fragment_size
+                               , " -w ", window_size
+                               , " -p ", p_cutoff
+                               , " -3 ", bed_out)
+
+     allCommands <- paste(c(bam2bed_exp_cmd, bam2bed_exp_cmd, bcp_cmd), collapse="\n") # it's three separate lines!
+     return(allCommands)
 }
 
 agw_get_bam_path <- function(experiment_id, sample_id) {
@@ -423,13 +436,21 @@ agw_get_count_path <- function(experiment_id, sample_id) {
      return(list("path"=count_path, "dir"=file.path(COUNT_DIR, experiment_id, sample_id)))
 }
 
-agw_get_gem_path <- function(experiment_id, sample_id) {
+agw_get_gem_output_path <- function(experiment_id, sample_id) {
      parentDir <- file.path(OUT_GEM_DIR, experiment_id, sample_id)
      prefixBase <- "gem"
      return(list("prefix"=file.path(parentDir, prefixBase)
                , "dir"=parentDir
                , "created_file"=file.path(parentDir, prefixBase, paste0(prefixBase,"_result.htm"))))
 }
+
+agw_get_bcp_output_path_for_sample <- function(experiment_id, sample_id) {
+     parentDir <- file.path(OUT_BCP_DIR, experiment_id, sample_id)
+     return(list("prefix"=paste0(parentDir, "/")
+               , "dir"=parentDir))
+}
+
+
 
 agw_de_two_groups <- function(theRG, exprDatTab, g1, g2, theGroupVec, writeOutputToThisFile=FALSE) {
      # g1 and g2 are both NUMERIC
@@ -544,32 +565,49 @@ agw_handle_rna_counting_per_feature <- function(exid, sid, species, cmdfile) {
      count_filenames.vec <- append(count_filenames.vec, ccc)
 }
 
-agw_handle_chip_peak_calls <- function(exid, sid, df_for_this_exid, cmdfile) {
+agw_handle_chip_peak_calls <- function(exid, sid, species, df_for_this_exid, cmdfile) {
      if (agw_sample_is_an_input(exid, sid, df_for_this_exid)) { # WE don't run GEM or BCP on an input sample by itself!
-          verboseStatusPrint("No need to peak-call an INPUT file (", exid, " / ", sid, ")")
-          return;
+          verboseStatusPrint("No need to peak-call the following INPUT file for ChIP-seq (", exid, " / ", sid, ")")
+          return(invisible(NULL)) # return early...
      }
 
      peak_type <- "TF" # or "HISTONE" or "NON-TF"
+
+     
+     inputBam  <- agw_get_chip_input_bam_for_sample(exid, sid, df_for_this_exid)
+     expBam    <- agw_get_bam_path(exid, sid)
      
      if (peak_type == "TF") {
-          ggg    <- agw_get_gem_path(exid, sid)
-          input  <- agw_get_chip_input_bam_for_sample(exid, sid, df_for_this_exid)
-          if (is.na(input)) {
-               msg <- paste0("[", exid, " FAILURE]: Failure to find a matching INPUT sample for experiment ", exid, " / sample ", sid, " -- not running GEM")
-               errlog(msg)
-               gemCmd <- paste0("# ", msg)
-          } else {
-               print0("[OK] Generating a list of commands to ", cmdfile)
-               gemCmd <- paste0("mkdir -p ", ggg$dir, " && ", agw_get_gem_chipseq_cmd(species, inputBam=input, expBam=bam, outPrefix=ggg$prefix))
-          }
-          do_outputs_already_exist <- file.nonzero.exists(ggg$created_file) # if the output file ALREADY EXISTS, then comment out the command
-          append_commands(cmdfile, agw_construct_cmd(gemCmd), commented_out=do_outputs_already_exist) # append the command for running gem
+          ggg_gem          <- agw_get_gem_output_path(exid, sid)
+          chip_dir_to_make <- ggg_gem$dir
+          #if (is.na(inputBam)) {
+          #     msg <- paste0("[", exid, " FAILURE]: Failure to find a matching INPUT sample for experiment ", exid, " / sample ", sid, " -- not running GEM")
+          #     errlog(msg)
+          #     gemCmd <- paste0("# ", msg)
+          #} else {
+          should_comment_out_since_outputs_exist <- file.nonzero.exists(ggg_gem$created_file) # if the output file ALREADY EXISTS, then comment out the command
+          peak_call_cmd <- agw_get_gem_chipseq_cmd(species, ctlBam=inputBam, expBam=expBam, outPrefix=ggg_gem$prefix)
+
+          
      } else if (peak_type == "HISTONE" || peak_type == "NON-TF") {
-          stop("can't handle BCP so far")
+          ggg_bcp          <- agw_get_bcp_output_path_for_sample(exid, sid)
+          chip_dir_to_make <- ggg_bcp$dir
+          
+          if ("OUTPUT ALREADY EXISTS" == TRUE) {
+               # TODO: maybe don't re-run in this case 
+               warning("this is a placeholder--can optimize this later")
+          } else {
+
+          }
+          should_comment_out_since_outputs_exist <- FALSE          
+          peak_call_cmd <- agw_get_bcp_chipseq_cmd(species=species, ctlBam=inputBam, expBam=expBam, outPrefix=ggg_bcp$prefix)
+          
      } else {
-          stop("unknown peak type")
+          stop("ERROR: Unknown peak type. We can only hadnle 'TF' and 'HISTONE' right now.")
      }
+
+     append_commands(cmdfile, agw_construct_cmd("mkdir -p ", chip_dir_to_make), commented_out=should_comment_out_since_outputs_exist)
+     append_commands(cmdfile, agw_construct_cmd(peak_call_cmd)                , commented_out=should_comment_out_since_outputs_exist)
 }
 
 # =====================  DONE WITH FUNCTION DEFINITIONS ==========================
@@ -587,16 +625,7 @@ if (opt$type %in% c("CHIP")) {
      stop(paste0("invalid assay type. On the command line, the assay type was specified as '--type=", opt$type, "' -- however, the only valid types currently are 'RNA' and 'CHIP'. Please specify one of those valid options!"))
 }
 
-
-
-
-#stop("truefinder")
-
-
-
 alldat      <- read_sample_info_from_file(opt$info)
-
-
 #for (exid in "24R") { # unique(dat[,"exid"])) {
 counter <- 0
 max_counter <- length(get_unique_experiment_ids_from_b2frame(alldat))
@@ -652,8 +681,8 @@ for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
                     errlog("[", exid, " FAILURE]: [MISSING BAM FILE in experiment ID ", exid, ", sample ID ", sid, ". Specifically, file <", bam, "> does not exist.")
                     exid_is_missing_a_sample <- TRUE
                } else {
-                    if      (opt$type %in% c("RNA") ) { agw_handle_rna_counting_per_feature(exid=exid, sid=sid, species=species, cmdfile=xout) }
-                    else if (opt$type %in% c("CHIP")) { agw_handle_chip_peak_calls(exid=exid, sid=sid, df_for_this_exid=subdat, cmdfile=xout) }
+                    if      (opt$type %in% c("RNA") ) { agw_handle_rna_counting_per_feature(exid=exid, sid=sid, species=species,                          cmdfile=xout) }
+                    else if (opt$type %in% c("CHIP")) {          agw_handle_chip_peak_calls(exid=exid, sid=sid, species=species, df_for_this_exid=subdat, cmdfile=xout) }
                     else                              { stop(paste0("Unrecognized assay type, specifically: ", opt$type)) }
                }
           }
@@ -684,3 +713,9 @@ if (length(FAILED_IDS) > 0) {
 cerr("[OK] with the following ", length(OK_IDS), " experiment IDs:")
 cerr(paste(names(OK_IDS), collapse=", "))
 cerr("---------------")
+
+
+cerr("You should see a bunch of output files with the following prefix/path (one file per experiment):")
+cerr("      Look for files matching this pattern ---> ls ", opt$out, "*")
+
+
