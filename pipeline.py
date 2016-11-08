@@ -2,7 +2,7 @@
 
 # ./1_pipeline.py --rna-samples=Z3_Test_Data/a1.mm9.chr19.fq.gz --groups='1'
 
-from __future__  import print_function # sets print("...") to have parens like in python 3
+from __future__ import print_function # sets print("...") to have parens like in python 3
 from __future__ import division # defaults to floating point division. No more "1/2 == 0"
 import sys
 import re
@@ -13,19 +13,30 @@ import argparse # requires python 2.7
 ASSAY_RNA  = 1
 ASSAY_CHIP = 2
 
+
+global_file_paths_we_already_aligned = dict()
+global_num_script_files_written = 0
+
+# ======= Paths to the programs we need. Assumed to be on the user's $PATH ========
+TOPHAT_PATH   = "tophat"
+BOWTIE_PATH  = "bowtie2"
+SAMTOOLS_PATH = "samtools"
+
+ALIGNER_TOPHAT  = TOPHAT_PATH
+ALIGNER_BOWTIE = BOWTIE_PATH
+
+TOPHAT_N_THREADS   = 4
+BOWTIE_N_THREADS  = 4
+SAMTOOLS_N_THREADS = BOWTIE_N_THREADS
+
+NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES = 4
+EXIT_CODE_IF_MISSING_FILE = 49 # just some arbitrary non-zero number
 LITERAL_BACKSLASH="\\" # reduces to just one backslash
 LITERAL_DQUOTE="\""
 
-global_file_paths_we_already_aligned = dict()
-
-
-TOPHAT_EXE_PATH  = "tophat"
-BOWTIE2_EXE_PATH = "bowtie2"
-SAMTOOLS_EXE = "samtools"
-
-BOWTIE_N_THREADS = 4
-TOPHAT_N_THREADS = 4
-SAMTOOLS_N_THREADS = BOWTIE_N_THREADS
+DEFAULT_SCRIPT_PREFIX     = "./PIPELINE_SCRIPT_"
+DEFAULT_SPLICED_ALIGN_DIR = "./Pipeline_01_Spliced_Tophat_Alignment"
+DEFAULT_DNA_ALIGN_DIR     = "./Pipeline_01_DNA_Bowtie_Alignment"
 
 opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
 
@@ -33,13 +44,22 @@ def enquote(s):
     # should we check to see if s has quotes in it already?
     return("\"" + str(s) + "\"")
 
-def generateCmd(m):
-    print(m)
+def verbosePrint(m):
+    if (opt.verbose): printStderr(m)
     return
 
-def verbosePrint(m):
-    if (opt.verbose): print(m)
+def progressPrint(m):
+    printStderr(m) # print even if we are NOT in verbose mode
     return
+
+def printStderr(*args, **keyargs):
+    print(*args, file=sys.stderr, **keyargs)
+
+def withPrependedBasedir(list_of_files, basedir):
+    if basedir is not None:
+        list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
+        pass
+    return list_of_files
 
 def dieBadArgs(errMsg):
     sys.exit("ERROR: Problem with the command line arguments! Specifically: " + errMsg + ". Try using '--help' to see all the possible arguments.")
@@ -48,19 +68,31 @@ def dieBadArgs(errMsg):
 def handleCmdLineArgs():
     DESC = '''
 A program for running a standard ChIP- or RNA-seq pipeline.
-Written for Python 2.7 by Alex Williams, 2016.'''
+Written for Python 2.7+ by Alex Williams, 2016. (Python 2.7 is needed for the 'argparse' library)
 
-    EPILOG = '''
-Version history: (nonet yet)
+What this program does:
+
+1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
+
+2) You run a command line invocation like:
+     python2  pipeline.py --rna-samples=/data/a1.fq.gz,/data/a2.fq.gz --groups=1,2 --species=mm9  --out="SCRIPTFILE_OUTPUT_PREFIX"
+
+3) The output is a shell script that you can then submit on your cluster.
 '''
 
-    parser = argparse.ArgumentParser(description=DESC, epilog=EPILOG, add_help=True)
+    EPILOG = '''
+Version history: (none yet)
+'''
+
+    parser = argparse.ArgumentParser(description=DESC, epilog=EPILOG, add_help=True, formatter_class=argparse.RawTextHelpFormatter)
     #, formatter_class=argparse.RawTextHelpFormatter)
 
     #parser.add_argument('--sup', '-s', dest='sup', default=None, metavar="\"UMI_LEFT,LINKER_LEFT,UMI_RIGHT,LINKER_RIGHT\"", type=str, help="Default: if unspecified (or set as --sup=GUESS), we will just guess the UMI lengths by looking at the consensus sequence of the first 1000 reads (and the linker wil be assumed to be ZERO bases--it will be included as part of the 'payload' sequence). 'Sup' stands for 'Supplementary' lengths (note: numbers, NOT actual sequence) for the UMI_LEFT, LINKER_LEFT, UMI_RIGHT, and LINKER_RIGHT.\nExample: --sup=\"8,2,2,5\"\n   * for a sample with an 8+5 UMI and linkers of length 2.")
 
     parser.add_argument('-v',  '--verbose', dest='verbose', action='store_true', help="Verbose debugging")
     parser.add_argument('--groups', '-g', type=str, default=None, dest='groups', help="Specify experiment groups (numeric). Must be the same length as the number of files.")
+
+    parser.add_argument('--basedir', '-b', type=str, default=None, dest='basedir', help="Optional. Specify a base directory to prepend to all paths.!")
 
     parser.add_argument('--chip-samples', '-c', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
     parser.add_argument('--chip-inputs' , '-i', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
@@ -70,16 +102,14 @@ Version history: (nonet yet)
     
     parser.add_argument('--delim', type=str, default=',', dest='delim', help="Default file/group delimiter. Normally should be a comma, unless you're doing something very unusual.")
 
+    parser.add_argument('--align-dir', type=str, default=None, dest='align_dir', help="Default location to put the ALIGNED reads after running tophat or bowtie. Ideally a full path.")
+
+    parser.add_argument('--out', '-o', type=str, default=DEFAULT_SCRIPT_PREFIX, dest='script_prefix', help="The output script files to write. For example, --out=PIPELINE would generate files with names like: PIPELINE_001.sh, PIPELINE_002.sh, etc. Can be a path with a folder component as well.")
+
     global opt # <-- critical, since we modify (global variable) "got" below. Do not remove this!
     opt = parser.parse_args()
 
-    if (opt.verbose):
-        #print("Unprocessed arguments:" , args)
-        #print("Unprocessed options:" , opts)
-        pass
-
     assay = None
-
     if (opt.species is None):
         dieBadArgs("Species must be specified! It must be one species for ALL samples currently.")
         pass
@@ -94,16 +124,22 @@ Version history: (nonet yet)
 
     if (opt.rna_samples is not None):
         assay = ASSAY_RNA
-        samples = opt.rna_samples.split(opt.delim)
+        if (opt.align_dir is None):
+            opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR
+            pass
+        samples = withPrependedBasedir(opt.rna_samples.split(opt.delim), opt.basedir)
         # Apparently we're running an RNA-seq project
         pass
     elif (opt.chip_samples is not None):
         assay = ASSAY_CHIP
-        samples = opt.chip_samples.split(opt.delim)
+        if (opt.align_dir is None):
+            opt.align_dir = DEFAULT_DNA_ALIGN_DIR
+            pass
+        samples = withPrependedBasedir(opt.chip_samples.split(opt.delim), opt.basedir)
         if (opt.chip_inputs is None):
             dieBadArgs("If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
             pass
-        inputs  = opt.chip_inputs.split(opt.delim)
+        inputs  = withPrependedBasedir(opt.chip_inputs.split(opt.delim), opt.basedir)
         # Apparently we're running a ChIP-seq project
         if len(inputs) != len(samples):
             dieBadArgs("Somehow your --chip-inputs was a different length from the --chip-samples! Fix this.")
@@ -113,23 +149,24 @@ Version history: (nonet yet)
         dieBadArgs("You have to AT LEAST have an RNA-seq sample to process or a ChIP-seq sample to process. Specify at least one!")
         pass
 
-    groups = opt.groups.split(opt.delim)
 
+
+    groups = opt.groups.split(opt.delim)
     if len(groups) != len(samples):
         dieBadArgs("Somehow your '--groups' was not equal in length to your specified number of sample files!")
         pass
+    
+    verbosePrint("Groups: " + str(groups))
 
-    print(groups)
+    # Finally, actually generate the commands...
 
     if assay == ASSAY_RNA:
-        handleRNA(groups=groups,  species=opt.species, samples=samples)
+        handleRNA(groups=groups,  species=opt.species, output_bam_dir=opt.align_dir, samples=samples,                script_prefix=opt.script_prefix)
     elif assay == ASSAY_CHIP:
-        handleCHIP(groups=groups, species=opt.species, samples=samples, inputs=inputs)
+        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samples=samples, inputs=inputs, script_prefix=opt.script_prefix)
     else:
         sys.exit("Something went horribly wrong!")
         pass
-
-
 
     
     return  # End of command-line-reading function
@@ -140,14 +177,15 @@ def listify_remove_none(aaa):
         aaa = [aaa] # wrap it in a list
     return [x for x in aaa if x is not None] # remove NONE elements
     
-class OurScript:
+class OurScript(object):
     """Script text for writing to a file"""
-    self.lines = ["#!/bin/bash -u"
-                 , "set -e"
-                 , "set -o pipefail"]
+    def __init__(self):
+        self.lines = ["#!/bin/bash -u"
+                      , "set -e"
+                      , "set -o pipefail"]
 
     def append(self, text):
-        self.lines.append()
+        self.lines.append(text) # add exactly one line
         return
 
     def appendCheckForRequiredFiles(self, file_list):
@@ -156,7 +194,8 @@ class OurScript:
             return # no need to do anything if we have zero items
         for f in file_list:
             self.append("if [[ ! -e " + enquote(f) + " ]]; then")
-            self.append("      echo 'Fatal error -- We cannot find the following required file: " + f + "'")
+            self.append("      echo '[ERROR] Cannot find the following required file, which we expect to exist: <" + f + ">")
+            self.append("      exit " + str(EXIT_CODE_IF_MISSING_FILE)) # exit with a somewhat arbitrary code number if there is a missing file
             self.append("fi")
             pass
         return
@@ -169,36 +208,43 @@ class OurScript:
         multiIfString = "if " + " && ".join(  [ "[[ -e " + enquote(g) + " ]]" for g in file_list ] ) # <-- python list comprehension that generates results like "if [[ -e myFile ]] && [[ -e file2 ]] && [[ -e file3 ]]"
         self.append(multiIfString)
         self.append("then")
-        self.append("    echo '[OK] All the specified output files already exist--so we are exiting thi script now.' ")
+        self.append("    echo '[OK] All the specified output files already exist--so we are exiting the script now.' ")
         self.append("    exit 0")
         self.append("fi")
         return
         
 
-    def write(self, destination=None):
-        print("\n".join(self.lines))
+    def writeToDisk(self, script_prefix=None):
+        if (script_prefix is None):
+            print("\n".join(self.lines)) # just print to stdout
+        else:
+            global global_num_script_files_written
+            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES) + ".sh"
+            global_num_script_files_written += 1
+            with open(scriptname, 'w') as fff:
+                fff.write("\n".join(self.lines) + "\n")
+                pass
+            pass
+            progressPrint("Wrote script data to the following filename: " + scriptname)
         return
 
 
 def newScriptText():
     return 
 
-def handleRNA(groups, species, samples):
+def handleRNA(groups, species, output_bam_dir, samples, script_prefix):
     
     for samp in samples:
-        generateAlignmentCmd(filename=samp, species=species)
+        generateAlignmentCmd(fastq1=samp, species=species, outdir=output_bam_dir, aligner=ALIGNER_TOPHAT, script_prefix=script_prefix+"_align_rna")
         pass
 
     pass
 
-def handleCHIP(groups, species, samples, inputs):
+def handleCHIP(groups, species, output_bam_dir, samples, inputs, script_prefix):
 
-    for i in range(len(samples)):
-        samp = samples[i]
-        inpt = inputs[i]
-        generateAlignmentCmd(filename=samp, species=species)
-        generateAlignmentCmd(filename=inpt, species=species)
-
+    for samp,inpt in zip(samples, inputs): # get matching samples/inputs
+        generateAlignmentCmd(fastq1=samp, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_sample")
+        generateAlignmentCmd(fastq1=inpt, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_input")
         # now run gem or whatever
         # finally, do something else
         pass
@@ -206,16 +252,17 @@ def handleCHIP(groups, species, samples, inputs):
 
 
 def agw_get_annotation(species, thing):
+    return "___PLACEHOLDER_FOR_ANNOTATION_FILE___"
 
-    return "temp"
 
-
-def generateAlignmentCmd(fastq1, fastq2=None, species, outdir, aligner):
+def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner=None, script_prefix=None):
     '''Note that this is will only generate ONE alignment command per file, even if it's called multiple times.'''
-    if filename in global_file_paths_we_already_aligned:
-        verbosePrint("[Skipping...]: We already generated an alignment command for the file " + filename)
+    
+    fqkey = " | ".join([str(fastq1), str(fastq2), str(species), str(aligner)]) # just a unique key for this pair of reads, species, and aligner
+    if fqkey in global_file_paths_we_already_aligned:
+        verbosePrint("[Skipping...]: Already generated an alignment command for the file/pair " + str(fastq1) + " and " + str(fastq2) + " with species " + str(species) + " and the aligner " + str(aligner))
         return # exit early
-    global_file_paths_we_already_aligned[filename] = True # remember that we saw this file...
+    global_file_paths_we_already_aligned[fqkey] = True # remember that we saw this file...
     
     isPaired = fastq2 is not None
     innerDistStr = " --mate-inner-dist=150 " if isPaired else " "
@@ -226,10 +273,10 @@ def generateAlignmentCmd(fastq1, fastq2=None, species, outdir, aligner):
 
     if aligner == ALIGNER_TOPHAT:
         gtf = agw_get_annotation(species, "gtf")    # <-- only actually used by tophat
-        cmdStr  = TOPHAT_EXE_PATH + " -o " + outdir 
+        cmdStr  = TOPHAT_PATH + " -o " + outdir 
         cmdStr += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
-        cmdStr += " " + "--GTF=", gtf
-        cmdStr += " " + "--num-threads=", TOPHAT_N_THREADS
+        cmdStr += " " + "--GTF=" + gtf
+        cmdStr += " " + "--num-threads=" + str(TOPHAT_N_THREADS)
         cmdStr += " " + innerDistStr
         cmdStr += " " + bowtieIndex
         cmdStr += " " + fastq1 + " "
@@ -241,15 +288,15 @@ def generateAlignmentCmd(fastq1, fastq2=None, species, outdir, aligner):
         else:
             inputFqString = " -U " + enquote(fastq1) + " "
             pass
-        cmdStr  = BOWTIE_EXE_PATH
-        cmdStr += " " + "--threads=" + BOWTIE_N_THREADS
+        cmdStr  = BOWTIE_PATH
+        cmdStr += " " + "--threads=" + str(BOWTIE_N_THREADS)
         cmdStr += " " + "-x " + bowtieIndex
         cmdStr += " " + inputFqString
-        cmdStr += " | "  + SAMTOOLS_EXE + " view -@ " + SAMTOOLS_N_THREADS + " -b - " +                        " > " + all_reads_bam
-        cmdStr += " && " + SAMTOOLS_EXE + " view -@ " + SAMTOOLS_N_THREADS + " -b -F 0x104 " + all_reads_bam + " "           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
+        cmdStr += " | "  + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b - " +                        " > " + all_reads_bam
+        cmdStr += " && " + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b -F 0x104 " + all_reads_bam + " "           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
         cmdStr += " | samtools sort - " + " > " + aligned_sorted_bam
     else:
-        raise Exception("unrecognized aligner, specifically: " + aligner)
+        raise Exception("Unrecognized aligner! We currently only know about tophat and bowtie2. Note that this is case-sensitive. This is a CODING bug and should not be related to a user-specified file. Your specified aligner was: " + aligner)
         pass
     
     xcmd = OurScript()
@@ -257,10 +304,9 @@ def generateAlignmentCmd(fastq1, fastq2=None, species, outdir, aligner):
     xcmd.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
 
     xcmd.append("mkdir -p " + enquote(outdir))
-    xcmd.append("tophat_whatever")
-    xcmd.append(cmdStr)
+    xcmd.append(cmdStr) # the actual alignment command!
     xcmd.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
-    xcmd.write()
+    xcmd.writeToDisk(script_prefix=script_prefix)
 
     # if ALL the generated files already exist, then do not run this script!
 
@@ -276,7 +322,7 @@ if __name__ == "__main__":
 
 
 
-x = '''
+xyz = '''
 
 
 #!/usr/bin/env Rscript
