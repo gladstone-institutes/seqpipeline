@@ -2,6 +2,8 @@
 
 # ./1_pipeline.py --rna-samples=Z3_Test_Data/a1.mm9.chr19.fq.gz --groups='1'
 
+# Tarring up our local copies of the data:
+
 from __future__ import print_function # sets print("...") to have parens like in python 3
 from __future__ import division # defaults to floating point division. No more "1/2 == 0"
 import sys
@@ -16,6 +18,12 @@ ASSAY_CHIP = 2
 
 global_file_paths_we_already_aligned = dict()
 global_num_script_files_written = 0
+
+global_annot = dict()
+global_annot['hg19'   ] = "/data/info/genome/hg19_ensembl_igenome_with_chr/hg19.chr"
+global_annot['mm9'    ] = "/data/info/genome/mm9_ensembl_igenome_with_chr/mm9.chr"
+global_annot['danRer7'] = "/data/info/genome/danRer7_ensembl_igenome_ucsc/danRer7_ucsc"
+global_annot['galGal4'] = "/data/info/genome/galGal4_ensembl_igenome_ucsc/galGal4_ucsc"
 
 # ======= Paths to the programs we need. Assumed to be on the user's $PATH ========
 TOPHAT_PATH   = "tophat"
@@ -52,11 +60,11 @@ def progressPrint(m):
     printStderr(m) # print even if we are NOT in verbose mode
     return
 
-def thingOrDie(thing, message):
-    if not thing:
-        dieBadArgs(message)
-        pass
-    return
+def argAssert(thing, message): # for things that involve user input somehow
+    if not thing: dieBadArgs(message)
+
+def stopifnot(thing, message): # for detecting programming bugs only
+    if not thing: raise(message)
 
 def isSameLenOrNone(x, y):
     return x is None or y is None or len(x) == len(Y)
@@ -78,6 +86,26 @@ def withPrependedBasedir(list_of_files, basedir):
         list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
         pass
     return list_of_files
+
+def tar_up_that_annotation():
+    '''Just a function for generating the list of files to be tarred up, if we want to send this annotation to someone else. Not really production-ready code here!'''
+    for assembly in global_annot:
+        a = getAnnot(assembly)
+        for subitem in a:
+            path = a[subitem]
+            if subitem == 'bowtie_index':
+                path += "*.bt2"
+                pass
+            else:
+                if not (os.path.isfile(path) or os.path.isdir(path)):
+                    print("**WARNING**: file or path above does not appear to exist! (This one: " + path + ")")
+                    pass
+                pass
+            print(path)
+            pass
+        pass
+    return
+
 
 def dieBadArgs(errMsg):
     sys.exit("ERROR: Problem with the command line arguments! Specifically: " + errMsg + ". Try using '--help' to see all the possible arguments.")
@@ -122,7 +150,7 @@ Version history: (none yet)
 
     parser.add_argument('--chip-samples', '--c1', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
     parser.add_argument('--chip-inputs' , '--p1', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
-    parser.add_argument('--rna-samples', '--rna1', '--r1', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
+    parser.add_argument('--rna-samples', '--r1', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
 
     parser.add_argument('--sample-mates', '--c2', '--r2', type=str, default=None, dest='sample_mates', help="The mate pair associatd with either the CHIP or RNA samples. Comma-delimited just like the normal samples. Example: --r1=DrugX.fq,DrugY.fq --r2=DrugXpair2.fq,DrugYpair2.fq")
     parser.add_argument('--input-mates', '--p2', type=str, default=None, dest='input_mates', help="The mate pair associated with the second end of a pair in a CHIP sample. Comma-delimited just like the normal samples.")
@@ -135,31 +163,30 @@ Version history: (none yet)
 
     parser.add_argument('--out', '-o', type=str, default=DEFAULT_SCRIPT_PREFIX, dest='script_prefix', help="The output script files to write. For example, --out=PIPELINE would generate files with names like: PIPELINE_001.sh, PIPELINE_002.sh, etc. Can be a path with a folder component as well.")
 
+    parser.add_argument('--debug-tar-annotations', dest="debug_tar_annotations", action='store_true', help="A debug command only for setting up this software. Generates a tar command that can be used to save the annotation data in one place.")
+
     global opt # <-- critical, since we modify (global variable) "got" below. Do not remove this!
     opt = parser.parse_args()
 
+
+    if (opt.debug_tar_annotations):
+        tar_up_that_annotation()
+        print("Exiting early since this is just a command for tarring files.")
+        return
+
+
     assay = None
-    if (opt.species is None):
-        dieBadArgs("Species must be specified! It must be one species for ALL samples currently.")
-        pass
-
-    if (opt.rna_samples is not None and (opt.chip_samples is not None or opt.chip_inputs is not None)):
-        dieBadArgs("You cannot specify BOTH RNA-seq and ALSO ChIP-seq at the same time! Pick either RNA-seq or ChIP-seq")
-        pass
-
-    if (opt.groups is None):
-        dieBadArgs("You must specify the groups that each sample belongs to, or 'NA' or a blank value.")
-        pass
+    argAssert(opt.species is not None, "A species must be specified! It must be one species for ALL samples currently. Example species: 'mm9' or 'danRer7' or 'hg19'.")
+    argAssert(opt.rna_samples is None or (opt.chip_samples is None and opt.chip_inputs is None), "You cannot specify BOTH RNA-seq and ALSO ChIP-seq at the same time! Pick either RNA-seq or ChIP-seq")
+    argAssert(opt.groups is not None, "You must specify the groups that each sample belongs to, or 'NA' or a blank value.")
 
     if (opt.rna_samples is not None):
         assay = ASSAY_RNA
         opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR if opt.align_dir is None else opt.align_dir
         samp1 = splitFileList(opt.rna_samples , delim=opt.delim, basedir=opt.basedir)
         samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
-        # Apparently we're running an RNA-seq project
-        pass
     elif (opt.chip_samples is not None):
-        thingOrDie(opt.chip_inputs is not None, "If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
+        argAssert(opt.chip_inputs is not None, "If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
         assay = ASSAY_CHIP
         opt.align_dir = DEFAULT_DNA_ALIGN_DIR if opt.align_dir is None else opt.align_dir
         samp1 = splitFileList(opt.chip_samples, delim=opt.delim, basedir=opt.basedir)
@@ -168,19 +195,22 @@ Version history: (none yet)
         inp1  = splitFileList(opt.chip_inputs, delim=opt.delim, basedir=opt.basedir)
         inp2  = splitFileList(opt.input_mates, delim=opt.delim, basedir=opt.basedir)
         # Apparently we're running a ChIP-seq project
-        thingOrDie(len(inp1) == len(samp1), "Somehow your --chip-inputs was a different length from the --chip-samples! Fix this.")
-        thingOrDie(isSameLenOrNone(inp1, inp2), "Forward and reverse MATE PAIRS must have the same number of files!")
+        argAssert(len(inp1) == len(samp1), "Somehow your --chip-inputs was a different length from the --chip-samples! Fix this.")
+        argAssert(isSameLenOrNone(inp1, inp2), "Forward and reverse MATE PAIRS must have the same number of files!")
     else:
         dieBadArgs("You have to AT LEAST have an RNA-seq sample to process or a ChIP-seq sample to process. Specify at least one!")
         pass
 
-    thingOrDie(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
+
+    argAssert(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
 
     groups = opt.groups.split(opt.delim)
-    thingOrDie(len(groups) == len(samp1), "Somehow your '--groups' was not equal in length to your specified number of sample files!")
+    argAssert(len(groups) == len(samp1), "Somehow your '--groups' was not equal in length to your specified number of sample files!")
     verbosePrint("Groups: " + str(groups))
 
     # Finally, actually generate the commands...
+
+    argAssert(opt.species in global_annot, "Your specified --species (a genome assembly) was not in our recognized list, unfortunately. Check your capitalization and spaces.")
 
     if assay == ASSAY_RNA:
         handleRNA(groups=groups,  species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2,                script_prefix=opt.script_prefix)
@@ -194,7 +224,8 @@ Version history: (none yet)
     return  # End of command-line-reading function
 
 
-def listify_remove_none(aaa):
+def listifyWithoutNone(aaa):
+    # Wraps anything not-a-list so that it becomes a list! Then removes 'None' elements from it.
     if not isinstance(aaa, (list, tuple)):
         aaa = [aaa] # wrap it in a list
     return [x for x in aaa if x is not None] # remove NONE elements
@@ -211,7 +242,7 @@ class OurScript(object):
         return
 
     def appendCheckForRequiredFiles(self, file_list):
-        file_list = listify_remove_none(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
+        file_list = listifyWithoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
         if (len(file_list) == 0):
             return # no need to do anything if we have zero items
         for f in file_list:
@@ -223,7 +254,7 @@ class OurScript(object):
         return
 
     def appendScriptExitIfAllFilesExist(self, file_list):
-        file_list = listify_remove_none(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
+        file_list = listifyWithoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
         if (len(file_list) == 0):
             return # no need to do anything if we have zero items
 
@@ -276,8 +307,21 @@ def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script
     pass
 
 
-def agw_get_annotation(species, thing):
-    return "___PLACEHOLDER_FOR_ANNOTATION_FILE___"
+def getAnnot(assembly, thing=None):
+    # Sort of a weird wrapper to an array. Probably not the most elegant way to do this, but should be OK for our low-performance needs. Easy to change in the future!
+    # 'None' is how you get the whole data structure
+    stopifnot(thing in [None, 'gtf', 'bowtie_index', 'fasta', 'fa_by_chrom', 'chr_sizes'], "Invalid annotation requested") # sanity check
+    vals = dict()
+    vals['bowtie_index'] = global_annot[assembly]
+    vals['gtf'         ] = global_annot[assembly] + ".gtf"
+    vals['fasta'       ] = global_annot[assembly] + ".fa"
+    vals['fa_by_chrom' ] = global_annot[assembly] + "_chromosome_fastas"
+    vals['chr_sizes'   ] = global_annot[assembly] + ".chrom.sizes.txt"
+
+    if thing is None:
+        return vals
+    else:
+        return vals[thing]
 
 
 def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner=None, script_prefix=None):
@@ -292,12 +336,12 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner
     isPaired = fastq2 is not None
     innerDistStr = " --mate-inner-dist=150 " if isPaired else " "
 
-    bowtieIndex = agw_get_annotation(species, "bowtie_index")
-    all_reads_bam = os.path.join(outdir, "all.bam")
+    bowtieIndex         = getAnnot(species, "bowtie_index")
+    all_reads_bam       = os.path.join(outdir, "all.bam")
     aligned_sorted_bam  = os.path.join(outdir, "accepted_hits.bam")
 
     if aligner == ALIGNER_TOPHAT:
-        gtf = agw_get_annotation(species, "gtf")    # <-- only actually used by tophat
+        gtf = getAnnot(species, "gtf")    # <-- only actually used by tophat
         cmdStr  = TOPHAT_PATH + " -o " + outdir 
         cmdStr += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
         cmdStr += " " + "--GTF=" + gtf
@@ -631,7 +675,7 @@ agw_construct_cmd <- function(...) {
      return(paste0(...)) # may have to add qsub stuff here
 }
 
-agw_get_annotation <- function(assembly, file_type, must_exist=TRUE) {
+getAnnot <- function(assembly, file_type, must_exist=TRUE) {
      stopifnot(file_type %in% c("bowtie_index", "gtf", "fasta", "fa_by_chrom", "chr_sizes")) # sanity check the input 'file_type' string variable
      mapping <- list("hg19"     ="/data/info/genome/hg19_ensembl_igenome_with_chr/hg19.chr"
                      , "mm9"    ="/data/info/genome/mm9_ensembl_igenome_with_chr/mm9.chr"
@@ -658,15 +702,15 @@ agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
      isPaired <- !is.nothing(fq2)
      innerDistStr <- ifelse(isPaired, " --mate-inner-dist=150 ", " ")
 
-     btie   <- agw_get_annotation(species, "bowtie_index")
-     ###fa   <- agw_get_annotation(species, "fasta")
+     btie   <- getAnnot(species, "bowtie_index")
+     ###fa   <- getAnnot(species, "fasta")
 
      all_reads_bam         <- file.path(outdir, "all.bam")
      filtered_final_bam    <- file.path(outdir, "accepted_hits.bam")
 
      cmd <- paste0("mkdir -p ", outdir)
      if (aligner %in% c("tophat", "tophat2")) {
-          gtf      <- agw_get_annotation(species, "gtf")    # <-- only actually used by tophat
+          gtf      <- getAnnot(species, "gtf")    # <-- only actually used by tophat
           pair2Str <- ifelse(isPaired, yes=paste0(" ", fq2), no="") # might be blank, if unpaired input
           cmd <- paste0(cmd, "\n"
                       , get_exe_path('tophat'), " -o ", outdir
@@ -712,8 +756,8 @@ agw_get_gem_chipseq_cmd <- function(species, ctlBam=NA, expBam, outPrefix) {
      qval    <- 2	      # sets the q-value threshold (-log10, so 2 = 0.01)
      kmin    <- 6	      # minimum kmer length. From Monkey.
      kmax    <- 13	      # maximum kmer length. From Monkey.
-     genomeByChromFastaDir <- agw_get_annotation(species, "fa_by_chrom")
-     chrSizesFile          <- agw_get_annotation(species, "chr_sizes")
+     genomeByChromFastaDir <- getAnnot(species, "fa_by_chrom")
+     chrSizesFile          <- getAnnot(species, "chr_sizes")
 
      if (!is.nothing(ctlBam) && !file.nonzero.exists(ctlBam)) {
           errlog("The missing BAM file we were looking for was named <<", ctlBam, ">>. It was part of experiment with output prefix <", outPrefix, ">.")
@@ -901,7 +945,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
 
 agw_handle_rna_counting_per_feature <- function(exid, sid, species, cmdfile) {
      bam    <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
-     gtf    <- agw_get_annotation(species, "gtf"); stopifnot(file.nonzero.exists(gtf))
+     gtf    <- getAnnot(species, "gtf"); stopifnot(file.nonzero.exists(gtf))
      ccc    <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"path"
      cccDir <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"dir"
      cerr("Validating that counts file <", ccc, "> exists for sample ", sid)
