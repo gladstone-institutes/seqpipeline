@@ -19,7 +19,7 @@ global_num_script_files_written = 0
 
 # ======= Paths to the programs we need. Assumed to be on the user's $PATH ========
 TOPHAT_PATH   = "tophat"
-BOWTIE_PATH  = "bowtie2"
+BOWTIE_PATH   = "bowtie2"
 SAMTOOLS_PATH = "samtools"
 
 ALIGNER_TOPHAT  = TOPHAT_PATH
@@ -52,8 +52,26 @@ def progressPrint(m):
     printStderr(m) # print even if we are NOT in verbose mode
     return
 
+def thingOrDie(thing, message):
+    if not thing:
+        dieBadArgs(message)
+        pass
+    return
+
+def isSameLenOrNone(x, y):
+    return x is None or y is None or len(x) == len(Y)
+
 def printStderr(*args, **keyargs):
     print(*args, file=sys.stderr, **keyargs)
+
+def splitFileList(string_of_files, delim, basedir=None):
+    if string_of_files is None:
+        return None
+    list_of_files = string_of_files.split(delim)
+    if basedir is not None:
+        list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
+        pass
+    return list_of_files
 
 def withPrependedBasedir(list_of_files, basedir):
     if basedir is not None:
@@ -75,7 +93,15 @@ What this program does:
 1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
 
 2) You run a command line invocation like:
-     python2  pipeline.py --rna-samples=/data/a1.fq.gz,/data/a2.fq.gz --groups=1,2 --species=mm9  --out="SCRIPTFILE_OUTPUT_PREFIX"
+     python2  pipeline.py --basedir="./test_data/" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="TEST_MOUSE_OUTPUT_PREFIX"
+
+Note that this is actual test data (a small set of reads from mouse chr19) that you can download:
+      a1.mm9.chr19.fq.gz   (these reads were pre-selected to align to mm9, so 100% of them should align.)
+      a2.mm9.chr19.fq.gz   (you can of course align them to any mouse genome build, however)
+      a3.mm9.chr19.fq.gz
+      b1.mm9.chr19.fq.gz
+      b2.mm9.chr19.fq.gz
+      b3.mm9.chr19.fq.gz
 
 3) The output is a shell script that you can then submit on your cluster.
 '''
@@ -94,9 +120,12 @@ Version history: (none yet)
 
     parser.add_argument('--basedir', '-b', type=str, default=None, dest='basedir', help="Optional. Specify a base directory to prepend to all paths.!")
 
-    parser.add_argument('--chip-samples', '-c', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
-    parser.add_argument('--chip-inputs' , '-i', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
-    parser.add_argument('--rna-samples', '--rna', '-r', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
+    parser.add_argument('--chip-samples', '--c1', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
+    parser.add_argument('--chip-inputs' , '--p1', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
+    parser.add_argument('--rna-samples', '--rna1', '--r1', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
+
+    parser.add_argument('--sample-mates', '--c2', '--r2', type=str, default=None, dest='sample_mates', help="The mate pair associatd with either the CHIP or RNA samples. Comma-delimited just like the normal samples. Example: --r1=DrugX.fq,DrugY.fq --r2=DrugXpair2.fq,DrugYpair2.fq")
+    parser.add_argument('--input-mates', '--p2', type=str, default=None, dest='input_mates', help="The mate pair associated with the second end of a pair in a CHIP sample. Comma-delimited just like the normal samples.")
 
     parser.add_argument('--species', '-s', type=str, default=None, dest='species', help="Required: The short name for the species.")
     
@@ -124,46 +153,39 @@ Version history: (none yet)
 
     if (opt.rna_samples is not None):
         assay = ASSAY_RNA
-        if (opt.align_dir is None):
-            opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR
-            pass
-        samples = withPrependedBasedir(opt.rna_samples.split(opt.delim), opt.basedir)
+        opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR if opt.align_dir is None else opt.align_dir
+        samp1 = splitFileList(opt.rna_samples , delim=opt.delim, basedir=opt.basedir)
+        samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
         # Apparently we're running an RNA-seq project
         pass
     elif (opt.chip_samples is not None):
+        thingOrDie(opt.chip_inputs is not None, "If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
         assay = ASSAY_CHIP
-        if (opt.align_dir is None):
-            opt.align_dir = DEFAULT_DNA_ALIGN_DIR
-            pass
-        samples = withPrependedBasedir(opt.chip_samples.split(opt.delim), opt.basedir)
-        if (opt.chip_inputs is None):
-            dieBadArgs("If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
-            pass
-        inputs  = withPrependedBasedir(opt.chip_inputs.split(opt.delim), opt.basedir)
+        opt.align_dir = DEFAULT_DNA_ALIGN_DIR if opt.align_dir is None else opt.align_dir
+        samp1 = splitFileList(opt.chip_samples, delim=opt.delim, basedir=opt.basedir)
+        samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
+
+        inp1  = splitFileList(opt.chip_inputs, delim=opt.delim, basedir=opt.basedir)
+        inp2  = splitFileList(opt.input_mates, delim=opt.delim, basedir=opt.basedir)
         # Apparently we're running a ChIP-seq project
-        if len(inputs) != len(samples):
-            dieBadArgs("Somehow your --chip-inputs was a different length from the --chip-samples! Fix this.")
-            pass
-        pass
+        thingOrDie(len(inp1) == len(samp1), "Somehow your --chip-inputs was a different length from the --chip-samples! Fix this.")
+        thingOrDie(isSameLenOrNone(inp1, inp2), "Forward and reverse MATE PAIRS must have the same number of files!")
     else:
         dieBadArgs("You have to AT LEAST have an RNA-seq sample to process or a ChIP-seq sample to process. Specify at least one!")
         pass
 
-
+    thingOrDie(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
 
     groups = opt.groups.split(opt.delim)
-    if len(groups) != len(samples):
-        dieBadArgs("Somehow your '--groups' was not equal in length to your specified number of sample files!")
-        pass
-    
+    thingOrDie(len(groups) == len(samp1), "Somehow your '--groups' was not equal in length to your specified number of sample files!")
     verbosePrint("Groups: " + str(groups))
 
     # Finally, actually generate the commands...
 
     if assay == ASSAY_RNA:
-        handleRNA(groups=groups,  species=opt.species, output_bam_dir=opt.align_dir, samples=samples,                script_prefix=opt.script_prefix)
+        handleRNA(groups=groups,  species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2,                script_prefix=opt.script_prefix)
     elif assay == ASSAY_CHIP:
-        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samples=samples, inputs=inputs, script_prefix=opt.script_prefix)
+        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_prefix=opt.script_prefix)
     else:
         sys.exit("Something went horribly wrong!")
         pass
@@ -194,7 +216,7 @@ class OurScript(object):
             return # no need to do anything if we have zero items
         for f in file_list:
             self.append("if [[ ! -e " + enquote(f) + " ]]; then")
-            self.append("      echo '[ERROR] Cannot find the following required file, which we expect to exist: <" + f + ">")
+            self.append("      echo '[ERROR] Cannot find the following required file, which we expect to exist: <" + f + ">" + "'")
             self.append("      exit " + str(EXIT_CODE_IF_MISSING_FILE)) # exit with a somewhat arbitrary code number if there is a missing file
             self.append("fi")
             pass
@@ -219,8 +241,8 @@ class OurScript(object):
             print("\n".join(self.lines)) # just print to stdout
         else:
             global global_num_script_files_written
-            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES) + ".sh"
             global_num_script_files_written += 1
+            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES) + ".sh"
             with open(scriptname, 'w') as fff:
                 fff.write("\n".join(self.lines) + "\n")
                 pass
@@ -232,19 +254,22 @@ class OurScript(object):
 def newScriptText():
     return 
 
-def handleRNA(groups, species, output_bam_dir, samples, script_prefix):
-    
-    for samp in samples:
-        generateAlignmentCmd(fastq1=samp, species=species, outdir=output_bam_dir, aligner=ALIGNER_TOPHAT, script_prefix=script_prefix+"_align_rna")
+def handleRNA(groups, species, output_bam_dir, samp1, samp2, script_prefix):
+    for i in range(len(samp1)):
+        s1 = samp1[i]
+        s2 = None if samp2 is None else samp2[i]
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_TOPHAT, script_prefix=script_prefix+"_align_rna")
         pass
-
     pass
 
-def handleCHIP(groups, species, output_bam_dir, samples, inputs, script_prefix):
-
-    for samp,inpt in zip(samples, inputs): # get matching samples/inputs
-        generateAlignmentCmd(fastq1=samp, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_sample")
-        generateAlignmentCmd(fastq1=inpt, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_input")
+def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_prefix):
+    for i in range(len(samp1)):
+        s1 = samp1[i]
+        s2 = None if samp2 is None else samp2[i]
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_sample")
+        p1 = inp1[i]
+        p2 = None if inp2  is None else inp2[i]
+        generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_input")
         # now run gem or whatever
         # finally, do something else
         pass
