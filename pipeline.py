@@ -29,6 +29,7 @@ global_annot['galGal4'] = "/data/info/genome/galGal4_ensembl_igenome_ucsc/galGal
 TOPHAT_PATH   = "tophat"
 BOWTIE_PATH   = "bowtie2"
 SAMTOOLS_PATH = "samtools"
+HTSEQ_COUNT_PATH = "htseq-count"
 
 ALIGNER_TOPHAT  = TOPHAT_PATH
 ALIGNER_BOWTIE = BOWTIE_PATH
@@ -63,7 +64,7 @@ def progressPrint(m):
 def argAssert(thing, message): # for things that involve user input somehow
     if not thing: dieBadArgs(message)
 
-def stopifnot(thing, message): # for detecting programming bugs only
+def xAssert(thing, message="No specific message"): # for detecting programming bugs only
     if not thing: raise(message)
 
 def isSameLenOrNone(x, y):
@@ -121,6 +122,10 @@ What this program does:
 1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
 
 2) You run a command line invocation like:
+     python2  pipeline.py --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="TEST_MOUSE_OUTPUT_PREFIX"
+        * Note that FULL PATHS are specified since this is on a cluster.
+        * If you're just running things locally, you can do:
+
      python2  pipeline.py --basedir="./test_data/" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="TEST_MOUSE_OUTPUT_PREFIX"
 
 Note that this is actual test data (a small set of reads from mouse chr19) that you can download:
@@ -176,6 +181,7 @@ Version history: (none yet)
 
 
     assay = None
+
     argAssert(opt.species is not None, "A species must be specified! It must be one species for ALL samples currently. Example species: 'mm9' or 'danRer7' or 'hg19'.")
     argAssert(opt.rna_samples is None or (opt.chip_samples is None and opt.chip_inputs is None), "You cannot specify BOTH RNA-seq and ALSO ChIP-seq at the same time! Pick either RNA-seq or ChIP-seq")
     argAssert(opt.groups is not None, "You must specify the groups that each sample belongs to, or 'NA' or a blank value.")
@@ -185,6 +191,8 @@ Version history: (none yet)
         opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR if opt.align_dir is None else opt.align_dir
         samp1 = splitFileList(opt.rna_samples , delim=opt.delim, basedir=opt.basedir)
         samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
+        inp1 = None # Rna-seq doesn't have 'input' files
+        inp2 = None # Rna-seq doesn't have 'input' files
     elif (opt.chip_samples is not None):
         argAssert(opt.chip_inputs is not None, "If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
         assay = ASSAY_CHIP
@@ -202,6 +210,8 @@ Version history: (none yet)
         pass
 
 
+    sample_id_list=samp1 # this is a placeholder until we ACTUALLY specify sample IDs
+
     argAssert(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
 
     groups = opt.groups.split(opt.delim)
@@ -212,13 +222,21 @@ Version history: (none yet)
 
     argAssert(opt.species in global_annot, "Your specified --species (a genome assembly) was not in our recognized list, unfortunately. Check your capitalization and spaces.")
 
+    xcmd = OurScript()
+
+    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir)
+
     if assay == ASSAY_RNA:
-        handleRNA(groups=groups,  species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2,                script_prefix=opt.script_prefix)
+        xcmd.append("###### Handling RNA-seq here ")
+        handleRNA(groups=groups, script_obj=xcmd, exper=eee)
     elif assay == ASSAY_CHIP:
-        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_prefix=opt.script_prefix)
+        xcmd.append("###### Handling ChIP-seq here ")
+        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd)
     else:
         sys.exit("Something went horribly wrong!")
         pass
+
+    xcmd.writeToDisk(script_prefix=opt.script_prefix)
 
     
     return  # End of command-line-reading function
@@ -229,13 +247,61 @@ def listifyWithoutNone(aaa):
     if not isinstance(aaa, (list, tuple)):
         aaa = [aaa] # wrap it in a list
     return [x for x in aaa if x is not None] # remove NONE elements
-    
+
+
+def maybeNoneDict(keys, values):
+    if values is None:
+        return dict.fromkeys(keys) # values are all NONE if a single "none" was passed in
+    else:
+        return dict(zip(keys, values))
+
+class Experiment(object):
+    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None):
+        self.expName = expName
+        self.sids = sid_list # sample IDs
+        self.species = {key:species for key in self.sids}
+        self.f1 = maybeNoneDict(self.sids, fq1_list)
+        self.f2 = maybeNoneDict(self.sids, fq2_list)
+        self.i1 = maybeNoneDict(self.sids, inp1_list)
+        self.i2 = maybeNoneDict(self.sids, inp2_list)
+        self.base_bam_dir = base_bam_dir
+        pass
+
+    def getBamDirForSample(self, sampName):
+        return os.path.join(self.base_bam_dir, self.expName, sampName)
+                        
+    def getSampleNames(self):
+        return self.sids
+
+    def getFqPairForSample(self, sampName):
+        return (self.f1[sampName], self.f2[sampName])
+    def getSpeciesForSample(self, sampName):
+        return self.species[sampName]
+
+
+class ExperimentHolder(object):
+    """Holds all the meta-data for our in-progress project."""
+    def __init__(self):
+        self.exps = dict()
+        pass
+
+    def addExp(self, expObj):
+        xAssert(isinstance(expObj, (ExperimentHolder)))
+        xAssert(expObj.name not in self.exps)
+        self.exps[expName] = expObj
+
+    def getExp(self, expName):
+        return self.exps[expName]
+        pass
+
+
 class OurScript(object):
     """Script text for writing to a file"""
     def __init__(self):
         self.lines = ["#!/bin/bash -u"
                       , "set -e"
                       , "set -o pipefail"]
+        pass
 
     def append(self, text):
         self.lines.append(text) # add exactly one line
@@ -282,35 +348,39 @@ class OurScript(object):
         return
 
 
-def newScriptText():
-    return 
-
-def handleRNA(groups, species, output_bam_dir, samp1, samp2, script_prefix):
-    for i in range(len(samp1)):
-        s1 = samp1[i]
-        s2 = None if samp2 is None else samp2[i]
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_TOPHAT, script_prefix=script_prefix+"_align_rna")
+def handleRNA(groups, script_obj, exper=None):
+    xAssert(isinstance(exper, (Experiment)))
+    for sampName in exper.getSampleNames():
+        (s1, s2) = exper.getFqPairForSample(sampName)
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
         pass
-    pass
 
-def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_prefix):
+    # Ok, now we have the aligned reads. Count them and then run differential expression
+
+
+    return
+
+def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_obj):
     for i in range(len(samp1)):
         s1 = samp1[i]
         s2 = None if samp2 is None else samp2[i]
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_sample")
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
         p1 = inp1[i]
         p2 = None if inp2  is None else inp2[i]
-        generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_prefix=script_prefix+"_align_chip_input")
+        generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
         # now run gem or whatever
         # finally, do something else
         pass
-    pass
+
+    # Ok, now we have the aligned reads
+
+    return
 
 
 def getAnnot(assembly, thing=None):
     # Sort of a weird wrapper to an array. Probably not the most elegant way to do this, but should be OK for our low-performance needs. Easy to change in the future!
     # 'None' is how you get the whole data structure
-    stopifnot(thing in [None, 'gtf', 'bowtie_index', 'fasta', 'fa_by_chrom', 'chr_sizes'], "Invalid annotation requested") # sanity check
+    xAssert(thing in [None, 'gtf', 'bowtie_index', 'fasta', 'fa_by_chrom', 'chr_sizes'], "Invalid annotation requested") # sanity check
     vals = dict()
     vals['bowtie_index'] = global_annot[assembly]
     vals['gtf'         ] = global_annot[assembly] + ".gtf"
@@ -324,7 +394,7 @@ def getAnnot(assembly, thing=None):
         return vals[thing]
 
 
-def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner=None, script_prefix=None):
+def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner=None, script_obj=None):
     '''Note that this is will only generate ONE alignment command per file, even if it's called multiple times.'''
     
     fqkey = " | ".join([str(fastq1), str(fastq2), str(species), str(aligner)]) # just a unique key for this pair of reads, species, and aligner
@@ -368,18 +438,14 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner
         raise Exception("Unrecognized aligner! We currently only know about tophat and bowtie2. Note that this is case-sensitive. This is a CODING bug and should not be related to a user-specified file. Your specified aligner was: " + aligner)
         pass
     
-    xcmd = OurScript()
-    xcmd.appendScriptExitIfAllFilesExist(file_list=[aligned_sorted_bam])     # exit EARLY if all the output files already exist
-    xcmd.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
 
-    xcmd.append("mkdir -p " + enquote(outdir))
-    xcmd.append(cmdStr) # the actual alignment command!
-    xcmd.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
-    xcmd.writeToDisk(script_prefix=script_prefix)
+    script_obj.appendScriptExitIfAllFilesExist(file_list=[aligned_sorted_bam])     # exit EARLY if all the output files already exist
+    script_obj.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
 
+    script_obj.append("mkdir -p " + enquote(outdir))
+    script_obj.append(cmdStr) # the actual alignment command!
+    script_obj.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
     # if ALL the generated files already exist, then do not run this script!
-
-        
 
     return
 
@@ -427,7 +493,7 @@ require("edgeR")
 
 
 options(stringsAsFactors=FALSE)
-if (interactive()) { options(error=recover) } # <-- only when running interactively, or else 'stop' and 'stopifnot' fail to work.
+if (interactive()) { options(error=recover) } # <-- only when running interactively, or else 'stop' and 'xAssert' fail to work.
 
 option_list <- list(
      make_option(c("-v", "--verbose"), action="store_true", default=FALSE
@@ -498,7 +564,7 @@ remember_exid_failure <- function(exid_that_failed, comment="") {
 
 
 get_java_and_jar_path <- function(jar_full_path, gigabytes_ram) {
-     stopifnot(!missing(gigabytes_ram))
+     xAssert(!missing(gigabytes_ram))
      return( paste0(get_exe_path("java"), " -Xmx", gigabytes_ram, "G -jar ", jar_full_path) )
 }
 
@@ -587,7 +653,7 @@ clear_file  <- function(filename) {
      if (!is.null(filename)) {
           connection <- file(filename, open="w")
           close(connection)
-          stopifnot(file.exists(filename))
+          xAssert(file.exists(filename))
      } else {
           # do nothing
      }
@@ -655,45 +721,10 @@ get_b2frame_for_exid_from_b2frame <- function(df, experiment_id) {
 get_sids_for_exid_from_b2frame <- function(df, experiment_id) { # gets a vector of sample IDs associated with this experiment ID
      assert_type_is_b2frame(df)
      interesting_rownames.vec <- sort(unique(rownames(df[ df$exid == experiment_id, , drop=F]))) # only the records for THIS SPECIFIC experiment
-     stopifnot(length(interesting_rownames.vec) > 0)
+     xAssert(length(interesting_rownames.vec) > 0)
      return(interesting_rownames.vec) # rownames are the sample IDs
 }
 
-clusterize_command <- function(cmd) { # Returns a qsub wrapper for the command 'cmd'
-     # Here's a weird 'feature' of R: we are keeping track of the NUMBER of qsub jobs here by adding an attribute to this function.
-     # (This is basically a static variable).
-     # This is TERRIBLE practice.
-     QSUB_EXE <- system2("which", args=c("qsub"),  stdout=T); stopifnot(file.exists(QSUB_EXE))
-     GLOBAL_QSUB_COUNT <<- (GLOBAL_QSUB_COUNT+1) # increment this GLOBAL variable each time a job is submitted
-     username <- Sys.info()[["user"]]
-     jobname  <- paste0("B2B_", GLOBAL_QSUB_PREFIX, "_", sprintf("%05d", GLOBAL_QSUB_COUNT), "_", username, "_", randint)
-     cmd      <- paste0("echo \"", cmd, "\" | ", QSUB_EXE, " -V -N ", "'", jobname, "'")
-     return(cmd)
-}
-
-agw_construct_cmd <- function(...) {
-     return(paste0(...)) # may have to add qsub stuff here
-}
-
-getAnnot <- function(assembly, file_type, must_exist=TRUE) {
-     stopifnot(file_type %in% c("bowtie_index", "gtf", "fasta", "fa_by_chrom", "chr_sizes")) # sanity check the input 'file_type' string variable
-     mapping <- list("hg19"     ="/data/info/genome/hg19_ensembl_igenome_with_chr/hg19.chr"
-                     , "mm9"    ="/data/info/genome/mm9_ensembl_igenome_with_chr/mm9.chr"
-                     , "danRer7"="/data/info/genome/danRer7_ensembl_igenome_ucsc/danRer7_ucsc"
-                     , "galGal4"="/data/info/genome/galGal4_ensembl_igenome_ucsc/galGal4_ucsc"
-                     )
-     pre = mapping[[assembly]] # file prefix
-     if (is.null(pre)) { stop(paste0("error, <", assembly, "> is an unrecognized assembly -- note that you must use the UCSC id for the assembly (like 'hg19' or 'mm9'), not the common species name (so not 'mouse')")) }
-     
-     file_list <- list("bowtie_index"=paste0(pre), "gtf"=paste0(pre,".gtf"), "fasta"=paste0(pre,".fa")
-                     , "fa_by_chrom"=paste0(pre,"_chromosome_fastas"), "chr_sizes"=paste0(pre,"chrom.sizes.txt"))
-     the_file <- file_list[[file_type]]
-     if (must_exist && !file.nonzero.exists(the_file) && !file.nonzero.exists(paste0(the_file, ".1.bt2"))) {
-          errlog("Missing the REQUIRED input file of type '", file_type, "', which we expected (but failed) to find at the following location: ", the_file)
-          stop("Missing a REQUIRED input file.")
-     }
-     return(the_file)
-}
 
 agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
      die_if_file_missing(fq1, "[ERR]: Input FASTQ file ", fq1, " (forward (pair 1) and/or unpaired) seems to be missing!")
@@ -734,7 +765,7 @@ agw_align <- function(exid, fq1, fq2=NULL, outdir, aligner="none") {
 agw_get_chip_input_id <- function(exid, sid, dframe) {
      thisdat <- dframe[ dframe[,"exid"]==exid, , drop=F]  # only the records for THIS SPECIFIC experiment
      sampdat <- thisdat[rownames(thisdat)==sid, , drop=F][1,,drop=F]
-     inid <- sampdat$chip_input; stopifnot(length(inid) == 1)
+     inid <- sampdat$chip_input; xAssert(length(inid) == 1)
      return(inid)
 }
 
@@ -762,9 +793,9 @@ agw_get_gem_chipseq_cmd <- function(species, ctlBam=NA, expBam, outPrefix) {
      if (!is.nothing(ctlBam) && !file.nonzero.exists(ctlBam)) {
           errlog("The missing BAM file we were looking for was named <<", ctlBam, ">>. It was part of experiment with output prefix <", outPrefix, ">.")
           return(paste0("echo 'failure for", ctlBam, "'"))
-          #stopifnot(is.na(ctlBam) || file.exists(ctlBam))
+          #xAssert(is.na(ctlBam) || file.exists(ctlBam))
      }
-     stopifnot(file.exists(expBam))
+     xAssert(file.exists(expBam))
 
      #GEM's help page is at http://groups.csail.mit.edu/cgs/gem/
      #Below is an example command I used to run GEM on Tbx5, a TF, Chip-seq
@@ -850,9 +881,9 @@ agw_get_bcp_output_path_for_sample <- function(experiment_id, sample_id) {
 
 agw_de_two_groups <- function(theRG, exprDatTab, g1, g2, theGroupVec, writeOutputToThisFile=FALSE) {
      # g1 and g2 are both NUMERIC
-     stopifnot(g1 != g2)
-     stopifnot(g1 >= 1);
-     stopifnot(g2 >= 1);
+     xAssert(g1 != g2)
+     xAssert(g1 >= 1);
+     xAssert(g2 >= 1);
      D <- DGEList(counts=theRG, group=theGroupVec)
      D <- edgeR::estimateCommonDisp(D)       
      D <- edgeR::estimateTagwiseDisp(D) # exactTest for negative bionomial distribution
@@ -881,7 +912,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
      assert_type_is_b2frame(df)
      groupcounts             <- table(df$expr_group)
      smallest_num_replicates <- min(groupcounts)
-     stopifnot(!missing(outdir)); stopifnot(!grep(" ", outdir)) # no spaces in outdir!
+     xAssert(!missing(outdir)); xAssert(!grep(" ", outdir)) # no spaces in outdir!
      append_commands(cmdfile, agw_construct_cmd(paste0("mkdir -p ", outdir)))
      edgerOut <- file.path(outdir, paste0("edgeR_differential_expression_", exid, "", SIM_STATUS, ".tsv.txt"))
      if (smallest_num_replicates < 2) {
@@ -896,7 +927,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
           FAILED_IDS[[exid]] <- 1
      } else {
           print0("Running EdgeR for experiment ", exid, "...")
-          stopifnot(all(sapply(count_filenames.vec, file.nonzero.exists))) # all the input files must ALREADY exist, please!
+          xAssert(all(sapply(count_filenames.vec, file.nonzero.exists))) # all the input files must ALREADY exist, please!
           RG <- edgeR::readDGE(count_filenames.vec, header=FALSE) # htseq-count does NOT have a header!
           # """Each file is assumed to contain digital gene expression data for
           # one genomic sample or count library, with gene identifiers in the
@@ -910,7 +941,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
           # If there are replicates:
           # Figure out groups for pairwise analysis
           groups <- df$expr_group
-          stopifnot(is.integer(groups))
+          xAssert(is.integer(groups))
           if (any(sort(unique(groups)) != seq_along(unique(groups)))) {
                errlog("ERROR 162F: the groups were NOT numbered 1-through-n with no gaps! This indicates something we did not expect in the input data.", fatal=TRUE)
                stop()
@@ -945,7 +976,7 @@ agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
 
 agw_handle_rna_counting_per_feature <- function(exid, sid, species, cmdfile) {
      bam    <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
-     gtf    <- getAnnot(species, "gtf"); stopifnot(file.nonzero.exists(gtf))
+     gtf    <- getAnnot(species, "gtf"); xAssert(file.nonzero.exists(gtf))
      ccc    <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"path"
      cccDir <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"dir"
      cerr("Validating that counts file <", ccc, "> exists for sample ", sid)
