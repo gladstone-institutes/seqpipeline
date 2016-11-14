@@ -47,6 +47,8 @@ DEFAULT_SCRIPT_PREFIX     = "./PIPELINE_SCRIPT_"
 DEFAULT_SPLICED_ALIGN_DIR = "./Pipeline_01_Spliced_Tophat_Alignment"
 DEFAULT_DNA_ALIGN_DIR     = "./Pipeline_01_DNA_Bowtie_Alignment"
 
+DEFAULT_HTSEQ_COUNT_DIR     = "./Pipeline_02_HTSeq_Count_Dir"
+
 opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
 
 def enquote(s):
@@ -122,11 +124,8 @@ What this program does:
 1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
 
 2) You run a command line invocation like:
-     python2  pipeline.py --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="TEST_MOUSE_OUTPUT_PREFIX"
+     python2  pipeline.py --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="MOUSE_TEST_OUTPUT_PREFIX"
         * Note that FULL PATHS are specified since this is on a cluster.
-        * If you're just running things locally, you can do:
-
-     python2  pipeline.py --basedir="./test_data/" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="TEST_MOUSE_OUTPUT_PREFIX"
 
 Note that this is actual test data (a small set of reads from mouse chr19) that you can download:
       a1.mm9.chr19.fq.gz   (these reads were pre-selected to align to mm9, so 100% of them should align.)
@@ -161,6 +160,10 @@ Version history: (none yet)
     parser.add_argument('--input-mates', '--p2', type=str, default=None, dest='input_mates', help="The mate pair associated with the second end of a pair in a CHIP sample. Comma-delimited just like the normal samples.")
 
     parser.add_argument('--species', '-s', type=str, default=None, dest='species', help="Required: The short name for the species.")
+
+    parser.add_argument('--sample-ids', '--sids', type=str, default=None, dest='sample_ids', help="Required: The short sample ID names, comma-delimited.")
+
+    parser.add_argument('--experiment-id', '--eids', type=str, default=None, dest='exper_id', help="Required: The single experiment ID (name).")
     
     parser.add_argument('--delim', type=str, default=',', dest='delim', help="Default file/group delimiter. Normally should be a comma, unless you're doing something very unusual.")
 
@@ -209,9 +212,11 @@ Version history: (none yet)
         dieBadArgs("You have to AT LEAST have an RNA-seq sample to process or a ChIP-seq sample to process. Specify at least one!")
         pass
 
+    argAssert(opt.sample_ids is not None, "Sample IDs must be specified as a comma-delimited list. For example: --sample-ids='S123,S191,S990'. One per fastq file pair.")
+    sample_id_list = opt.sample_ids.split(opt.delim)
+    argAssert(len(samp1) == len(sample_id_list), "The number of sample IDs and the number of input fastq files is DIFFERENT, which indicate a problem")
 
-    sample_id_list=samp1 # this is a placeholder until we ACTUALLY specify sample IDs
-
+    argAssert(opt.exper_id is not None, "An experiment ID (--experiment-id='Something') is required, but one was not specified")
     argAssert(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
 
     groups = opt.groups.split(opt.delim)
@@ -224,7 +229,7 @@ Version history: (none yet)
 
     xcmd = OurScript()
 
-    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir)
+    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir, base_count_dir=DEFAULT_HTSEQ_COUNT_DIR)
 
     if assay == ASSAY_RNA:
         xcmd.append("###### Handling RNA-seq here ")
@@ -256,7 +261,7 @@ def maybeNoneDict(keys, values):
         return dict(zip(keys, values))
 
 class Experiment(object):
-    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None):
+    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None, base_count_dir=None):
         self.expName = expName
         self.sids = sid_list # sample IDs
         self.species = {key:species for key in self.sids}
@@ -265,6 +270,7 @@ class Experiment(object):
         self.i1 = maybeNoneDict(self.sids, inp1_list)
         self.i2 = maybeNoneDict(self.sids, inp2_list)
         self.base_bam_dir = base_bam_dir
+        self.base_count_dir = base_count_dir
         pass
 
     def getBamDirForSample(self, sampName):
@@ -277,6 +283,18 @@ class Experiment(object):
         return (self.f1[sampName], self.f2[sampName])
     def getSpeciesForSample(self, sampName):
         return self.species[sampName]
+
+    def getAlignedBamFilenameForSample(self, sampName):
+        return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
+        return self.species[sampName]
+
+    def getCountDirForSample(self, sampName):
+        return os.path.join(self.base_count_dir, self.expName, sampName)
+
+    def getCountFileForSample(self, sampName):
+        htseq_file_base = "htseq_count." + self.expName + "." + sampName + ".matrix.txt"
+        return os.path.join(self.getCountDirForSample(sampName), htseq_file_base)
+
 
 
 class ExperimentHolder(object):
@@ -352,7 +370,14 @@ def handleRNA(groups, script_obj, exper=None):
     xAssert(isinstance(exper, (Experiment)))
     for sampName in exper.getSampleNames():
         (s1, s2) = exper.getFqPairForSample(sampName)
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), outbam=exper.getAlignedBamFilenameForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
+        pass
+
+    for sampName in exper.getSampleNames():
+        theSpecies   = exper.getSpeciesForSample(sampName)
+        theGtf       = getAnnot(theSpecies, "gtf")
+        countThisBam = exper.getAlignedBamFilenameForSample(sampName)
+        generateHtseqCountCmd(bam=countThisBam, gtf=theGtf, outdir=exper.getCountDirForSample(sampName), outfile=exper.getCountFileForSample(sampName), script_obj=script_obj)
         pass
 
     # Ok, now we have the aligned reads. Count them and then run differential expression
@@ -393,8 +418,17 @@ def getAnnot(assembly, thing=None):
     else:
         return vals[thing]
 
+def generateHtseqCountCmd(bam, gtf, outdir, outfile, script_obj):
+    sortedbam = bam + ".sorted_by_name.bam"
+    script_obj.append("mkdir -p " + outdir)
+    script_obj.append(SAMTOOLS_PATH + " sort -n " + bam + " > " + sortedbam)
+    ht_params = " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id "
+    cmd = HTSEQ_COUNT_PATH + " " + ht_params + " " + sortedbam + " " + gtf + " > " + outfile
+    script_obj.append(cmd)
+    return
 
-def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner=None, script_obj=None):
+
+def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=None, aligner=None, script_obj=None):
     '''Note that this is will only generate ONE alignment command per file, even if it's called multiple times.'''
     
     fqkey = " | ".join([str(fastq1), str(fastq2), str(species), str(aligner)]) # just a unique key for this pair of reads, species, and aligner
@@ -407,33 +441,35 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner
     innerDistStr = " --mate-inner-dist=150 " if isPaired else " "
 
     bowtieIndex         = getAnnot(species, "bowtie_index")
-    all_reads_bam       = os.path.join(outdir, "all.bam")
-    aligned_sorted_bam  = os.path.join(outdir, "accepted_hits.bam")
+    all_reads_bam       = os.path.join(outdir, "all.bam") # intermediate
+    aligned_sorted_bam  = outbam
 
     if aligner == ALIGNER_TOPHAT:
         gtf = getAnnot(species, "gtf")    # <-- only actually used by tophat
-        cmdStr  = TOPHAT_PATH + " -o " + outdir 
-        cmdStr += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
-        cmdStr += " " + "--GTF=" + gtf
-        cmdStr += " " + "--num-threads=" + str(TOPHAT_N_THREADS)
-        cmdStr += " " + innerDistStr
-        cmdStr += " " + bowtieIndex
-        cmdStr += " " + fastq1 + " "
-        cmdStr += " " + fastq2  if isPaired  else "" # might or might not have a second file in the pair!
-        
+        cmd  = TOPHAT_PATH + " -o " + outdir 
+        cmd += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
+        cmd += " " + "--GTF=" + gtf
+        cmd += " " + "--num-threads=" + str(TOPHAT_N_THREADS)
+        cmd += " " + innerDistStr
+        cmd += " " + bowtieIndex
+        cmd += " " + fastq1 + " "
+        cmd += " " + fastq2  if isPaired  else "" # might or might not have a second file in the pair!
+        TOPHAT_HARDCODED_BAM_OUT_NAME = "accepted_hits.bam" # tophat always generates files with this output name, no matter what.
+        tophat_outbam = os.path.join(outdir, TOPHAT_HARDCODED_BAM_OUT_NAME)
+        cmd += "\n" + "test -e " + aligned_sorted_bam + " || mv -f " + tophat_outbam + " " + aligned_sorted_bam # move it to the FINAL bam location. Which might be the same! "test" is so that we ONLY MOVE IT if the target does not already exist. Otherwise do not move it. So if the filenames are the same, then don't move it, since that generates an error code.
     elif aligner == ALIGNER_BOWTIE:
         if isPaired:
             inputFqString = " -1 " + enquote(fastq1) + " -2 " + enquote(fastq2) + " "
         else:
             inputFqString = " -U " + enquote(fastq1) + " "
             pass
-        cmdStr  = BOWTIE_PATH
-        cmdStr += " " + "--threads=" + str(BOWTIE_N_THREADS)
-        cmdStr += " " + "-x " + bowtieIndex
-        cmdStr += " " + inputFqString
-        cmdStr += " | "  + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b - " +                        " > " + all_reads_bam
-        cmdStr += " && " + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b -F 0x104 " + all_reads_bam + " "           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
-        cmdStr += " | samtools sort - " + " > " + aligned_sorted_bam
+        cmd  = BOWTIE_PATH
+        cmd += " " + "--threads=" + str(BOWTIE_N_THREADS)
+        cmd += " " + "-x " + bowtieIndex
+        cmd += " " + inputFqString
+        cmd += " | "  + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b - " +                        " > " + all_reads_bam
+        cmd += " && " + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b -F 0x104 " + all_reads_bam + " "           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
+        cmd += " | samtools sort - " + " > " + aligned_sorted_bam
     else:
         raise Exception("Unrecognized aligner! We currently only know about tophat and bowtie2. Note that this is case-sensitive. This is a CODING bug and should not be related to a user-specified file. Your specified aligner was: " + aligner)
         pass
@@ -443,7 +479,7 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, aligner
     script_obj.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
 
     script_obj.append("mkdir -p " + enquote(outdir))
-    script_obj.append(cmdStr) # the actual alignment command!
+    script_obj.append(cmd) # the actual alignment command!
     script_obj.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
     # if ALL the generated files already exist, then do not run this script!
 
