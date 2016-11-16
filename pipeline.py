@@ -1,5 +1,10 @@
 #!/usr/bin/env python2
 
+'''
+Run this script with --help to see some examples uses and command line option descriptions.
+This is a python2.x script. It requires at least python2.7 due to the use of the 'argparse' library.
+'''
+
 # ./1_pipeline.py --rna-samples=Z3_Test_Data/a1.mm9.chr19.fq.gz --groups='1'
 
 # Tarring up our local copies of the data:
@@ -7,7 +12,7 @@
 from __future__ import print_function # sets print("...") to have parens like in python 3
 from __future__ import division # defaults to floating point division. No more "1/2 == 0"
 import sys
-import re
+#import re
 import pdb #pdb.set_trace() ## Python Debugger! See: http://aymanh.com/python-debugging-techniques
 import os.path
 import argparse # requires python 2.7
@@ -48,12 +53,11 @@ EXIT_CODE_IF_MISSING_FILE = 49 # just some arbitrary non-zero number
 LITERAL_BACKSLASH="\\" # reduces to just one backslash
 LITERAL_DQUOTE="\""
 
-DEFAULT_SCRIPT_PREFIX     = "./PIPELINE_SCRIPT_"
-DEFAULT_SPLICED_ALIGN_DIR = "./Pipeline_01_Spliced_Tophat_Alignment"
-DEFAULT_DNA_ALIGN_DIR     = "./Pipeline_01_DNA_Bowtie_Alignment"
-
-DEFAULT_HTSEQ_COUNT_DIR     = "./Pipeline_02_HTSeq_Count_Dir"
-DEFAULT_EDGER_DIFF_EXPR_DIR = "./Pipeline_03_EdgeR_Diff_Expr_Dir"
+DEFAULT_SCRIPT_PREFIX     = "PIPELINE_SCRIPT_"
+DEFAULT_SPLICED_ALIGN_DIR = "Pipeline_01_Spliced_Tophat_Alignment"
+DEFAULT_DNA_ALIGN_DIR     = "Pipeline_01_DNA_Bowtie_Alignment"
+DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
+DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
 DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script also changes.
 
 opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
@@ -74,28 +78,36 @@ def argAssert(thing, message): # for things that involve user input somehow
     if not thing: dieBadArgs(message)
 
 def xAssert(thing, message="No specific message"): # for detecting programming bugs only
-    if not thing: raise(message)
+    if not isinstance(message, str):
+        raise "wrong message argument--must be a string"
+    if not thing: raise(Exception(message))
 
 def isSameLenOrNone(x, y):
-    return x is None or y is None or len(x) == len(Y)
+    return (x is None) or (y is None) or (len(x) == len(y))
 
 def printStderr(*args, **keyargs):
     print(*args, file=sys.stderr, **keyargs)
 
+def pathWithBase(basedir, path):
+    return path if basedir is None else os.path.join(basedir, path)
+
 def splitFileList(string_of_files, delim, basedir=None):
+    # Splits up a string
     if string_of_files is None:
         return None
-    list_of_files = string_of_files.split(delim)
-    if basedir is not None:
-        list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
-        pass
+    assertType(string_of_files, str)
+    assertType(delim, str)
+    list_of_files = [pathWithBase(basedir, fff) for fff in string_of_files.split(delim)] # python list comprehension---add the basedir to the beginning of each file path
     return list_of_files
 
-def withPrependedBasedir(list_of_files, basedir):
-    if basedir is not None:
-        list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
-        pass
-    return list_of_files
+def getListItemUnlessNone(theList, index):
+    return None if (theList is None) else theList[index]
+
+#def withPrependedBasedir(list_of_files, basedir):
+#    if basedir is not None:
+#        list_of_files = [os.path.join(basedir, fff) for fff in list_of_files] # python list comprehension---add the basedir to the beginning of each file path
+#        pass
+#    return list_of_files
 
 def tar_up_that_annotation():
     '''Just a function for generating the list of files to be tarred up, if we want to send this annotation to someone else. Not really production-ready code here!'''
@@ -236,7 +248,12 @@ Version history: (none yet)
 
     xcmd = OurScript()
 
-    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir, base_count_dir=DEFAULT_HTSEQ_COUNT_DIR, base_edger_dir=DEFAULT_EDGER_DIFF_EXPR_DIR)
+    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list
+                     , fq1_list=samp1, fq2_list=samp2
+                     , inp1_list=inp1, inp2_list=inp2
+                     , base_bam_dir=pathWithBase(opt.basedir, opt.align_dir)
+                     , base_count_dir=pathWithBase(opt.basedir, DEFAULT_HTSEQ_COUNT_DIR)
+                     , base_edger_dir=pathWithBase(opt.basedir, DEFAULT_EDGER_DIFF_EXPR_DIR))
 
     if assay == ASSAY_RNA:
         xcmd.append("###### Handling RNA-seq here ")
@@ -245,19 +262,21 @@ Version history: (none yet)
         xcmd.append("###### Handling ChIP-seq here ")
         handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd)
     else:
-        sys.exit("Something went horribly wrong!")
+        sys.exit("Something went wrong (programming bug)---this assay type is not recognized!")
         pass
 
     xcmd.writeToDisk(script_prefix=opt.script_prefix)
-
     
     return  # End of command-line-reading function
 
 
-def listifyWithoutNone(aaa):
-    # Wraps anything not-a-list so that it becomes a list! Then removes 'None' elements from it.
-    if not isinstance(aaa, (list, tuple)):
-        aaa = [aaa] # wrap it in a list
+def assertType(x, ok_types):
+    if (not isinstance(ok_types, (tuple, type))):
+        raise Exception("The 'ok_types' argument must be a 'tuple' or a 'type'.")
+    # Require that everything in the list_of_things is one of the "ok_types"
+    xAssert(isinstance(x, ok_types), "We were looking for one of these types: "+str(ok_types)+", but instead we got a "+str(type(x))+"")
+
+def withoutNone(aaa):
     return [x for x in aaa if x is not None] # remove NONE elements
 
 
@@ -269,48 +288,49 @@ def maybeNoneDict(keys, values):
 
 class Experiment(object):
     def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None, base_count_dir=None, base_edger_dir=None):
+        xAssert(isinstance(sid_list, (list, tuple)))
+        xAssert(isinstance(expName, (str)))
         self.expName = expName
-        self.sids = sid_list # sample IDs
-        self.species = {key:species for key in self.sids}
+        self.sids    = sid_list # list of sample IDs
+        self.species = {key:species for key in self.sids} # dict
         self.f1 = maybeNoneDict(self.sids, fq1_list)
         self.f2 = maybeNoneDict(self.sids, fq2_list)
         self.i1 = maybeNoneDict(self.sids, inp1_list)
         self.i2 = maybeNoneDict(self.sids, inp2_list)
-        self.base_bam_dir = base_bam_dir
+        self.base_bam_dir   = base_bam_dir
         self.base_count_dir = base_count_dir
         self.base_edger_dir = base_edger_dir
         pass
 
     def getBamDirForSample(self, sampName):
-        return os.path.join(self.base_bam_dir, self.expName, sampName)
+        # Example:  my_bam_files/EXPERIMENT_27/SAMPLE_18/
+        return os.path.join(self.base_bam_dir, self.expName, sampName) # Note that this makes TWO subdirectories!
                         
-    def getSampleNames(self):
+    def getSampleNames(self): # returns: list
         return self.sids
 
-    def getFqPairForSample(self, sampName):
+    def getFqPairForSample(self, sampName): # returns (2-element tuple)
         return (self.f1[sampName], self.f2[sampName])
 
-    def getSpeciesForSample(self, sampName):
+    def getSpeciesForSample(self, sampName): # returns: string (single assembly name)
         return self.species[sampName]
 
-    def getAlignedBamForSample(self, sampName):
+    def getAlignedBamForSample(self, sampName):  # returns: string (single file path)
         return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
-        return self.species[sampName]
 
-    def getCountDirForSample(self, sampName): # returns a single directory full path (string)
+    def getCountDirForSample(self, sampName): # returns: string (a single directory full path)
         return os.path.join(self.base_count_dir, self.expName, sampName)
 
-    def getCountFileForSample(self, sampName): # returns a single file path (string)
-        htseq_file_base = "htseq_count." + self.expName + "." + sampName + ".matrix.txt"
-        return os.path.join(self.getCountDirForSample(sampName), htseq_file_base)
+    def getCountFileForSample(self, sampName): # returns: string (single file path)
+        return os.path.join(self.getCountDirForSample(sampName), "htseq_count."+self.expName+"."+sampName+".matrix.txt")
 
-    def getAllCountFiles(self): # returns a list of file paths
+    def getAllCountFiles(self): # returns: **list** of file paths
         return [self.getCountFileForSample(x) for x in self.getSampleNames()] # <-- list comprehension: return a LIST of all count file paths
 
-    def getEdgeRDiffExprDir(self): # returns a single full file path (string)
+    def getEdgeRDiffExprDir(self): # returns: string (single full file path)
         return os.path.join(self.base_count_dir, self.base_edger_dir)
 
-    def getEdgeRDiffExprFile(self): # returns a single full file path (string)
+    def getEdgeRDiffExprFile(self): # returns: string (single full file path)
         return os.path.join(self.getEdgeRDiffExprDir(), "edgeR." + self.expName + ".out.txt")
 
 
@@ -354,7 +374,8 @@ class OurScript(object):
         return
 
     def appendCheckForRequiredFiles(self, file_list):
-        file_list = listifyWithoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
+        assertType(file_list, list)
+        file_list = withoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
         if (len(file_list) == 0):
             return # no need to do anything if we have zero items
         for f in file_list:
@@ -366,7 +387,8 @@ class OurScript(object):
         return
 
     def appendScriptExitIfAllFilesExist(self, file_list):
-        file_list = listifyWithoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
+        assertType(file_list, list)
+        file_list = withoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
         if (len(file_list) == 0):
             return # no need to do anything if we have zero items
 
@@ -418,14 +440,18 @@ def handleRNA(groups, script_obj, exper=None):
 def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_obj):
     for i in range(len(samp1)):
         s1 = samp1[i]
-        s2 = None if samp2 is None else samp2[i]
+        s2 = getListItemUnlessNone(samp2, index=i)
         generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
         p1 = inp1[i]
-        p2 = None if inp2  is None else inp2[i]
+        p2 = getListItemUnlessNone(inp2, index=i)
         generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
         # now run gem or whatever
         # finally, do something else
         pass
+
+    # peak call
+    # gemCmd
+    # bcpCmd
 
     # Ok, now we have the aligned reads
 
@@ -469,8 +495,6 @@ def generateEdgeRCmd(count_files, groups, outdir, outfile, script_obj):
     return
 
 
-
-
 def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=None, aligner=None, script_obj=None):
     '''Note that this is will only generate ONE alignment command per file, even if it's called multiple times.'''
     
@@ -478,9 +502,10 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
     if fqkey in global_file_paths_we_already_aligned:
         verbosePrint("[Skipping...]: Already generated an alignment command for the file/pair " + str(fastq1) + " and " + str(fastq2) + " with species " + str(species) + " and the aligner " + str(aligner))
         return # exit early
+    
     global_file_paths_we_already_aligned[fqkey] = True # remember that we saw this file...
     
-    isPaired = fastq2 is not None
+    isPaired     = fastq2 is not None
     innerDistStr = " --mate-inner-dist=150 " if isPaired else " "
 
     bowtieIndex         = getAnnot(species, "bowtie_index")
@@ -488,7 +513,7 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
     aligned_sorted_bam  = outbam
 
     if aligner == ALIGNER_TOPHAT:
-        gtf = getAnnot(species, "gtf")    # <-- only actually used by tophat
+        gtf  = getAnnot(species, "gtf")    # <-- only actually used by tophat
         cmd  = TOPHAT_PATH + " -o " + outdir 
         cmd += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
         cmd += " " + "--GTF=" + gtf
@@ -501,22 +526,17 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
         tophat_outbam = os.path.join(outdir, TOPHAT_HARDCODED_BAM_OUT_NAME)
         cmd += "\n" + "test -e " + aligned_sorted_bam + " || mv -f " + tophat_outbam + " " + aligned_sorted_bam # move it to the FINAL bam location. Which might be the same! "test" is so that we ONLY MOVE IT if the target does not already exist. Otherwise do not move it. So if the filenames are the same, then don't move it, since that generates an error code.
     elif aligner == ALIGNER_BOWTIE:
-        if isPaired:
-            inputFqString = " -1 " + enquote(fastq1) + " -2 " + enquote(fastq2) + " "
-        else:
-            inputFqString = " -U " + enquote(fastq1) + " "
-            pass
+        inputFqString = " ".join(["-1", enquote(fastq1), "-2", enquote(fastq2)])   if isPaired else   " ".join(["-U", enquote(fastq1)])
         cmd  = BOWTIE_PATH
         cmd += " " + "--threads=" + str(BOWTIE_N_THREADS)
         cmd += " " + "-x " + bowtieIndex
-        cmd += " " + inputFqString
+        cmd += " " + inputFqString + " "
         cmd += " | "  + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b - " +                        " > " + all_reads_bam
         cmd += " && " + SAMTOOLS_PATH + " view -@ " + str(SAMTOOLS_N_THREADS) + " -b -F 0x104 " + all_reads_bam + " "           # samtools view -b -F 0x104 in.bam > mapped_primary.bam This is how you get ONLY primary mapped reads
         cmd += " | samtools sort - " + " > " + aligned_sorted_bam
     else:
         raise Exception("Unrecognized aligner! We currently only know about tophat and bowtie2. Note that this is case-sensitive. This is a CODING bug and should not be related to a user-specified file. Your specified aligner was: " + aligner)
         pass
-    
 
     script_obj.appendScriptExitIfAllFilesExist(file_list=[aligned_sorted_bam])     # exit EARLY if all the output files already exist
     script_obj.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
