@@ -30,9 +30,14 @@ TOPHAT_PATH   = "tophat"
 BOWTIE_PATH   = "bowtie2"
 SAMTOOLS_PATH = "samtools"
 HTSEQ_COUNT_PATH = "htseq-count"
+RSCRIPT_PATH = "Rscript" # <-- part of the default R install
+EDGER_SCRIPT = "run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
+
 
 ALIGNER_TOPHAT  = TOPHAT_PATH
 ALIGNER_BOWTIE = BOWTIE_PATH
+
+
 
 TOPHAT_N_THREADS   = 4
 BOWTIE_N_THREADS  = 4
@@ -48,6 +53,8 @@ DEFAULT_SPLICED_ALIGN_DIR = "./Pipeline_01_Spliced_Tophat_Alignment"
 DEFAULT_DNA_ALIGN_DIR     = "./Pipeline_01_DNA_Bowtie_Alignment"
 
 DEFAULT_HTSEQ_COUNT_DIR     = "./Pipeline_02_HTSeq_Count_Dir"
+DEFAULT_EDGER_DIFF_EXPR_DIR = "./Pipeline_03_EdgeR_Diff_Expr_Dir"
+DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script also changes.
 
 opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
 
@@ -229,7 +236,7 @@ Version history: (none yet)
 
     xcmd = OurScript()
 
-    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir, base_count_dir=DEFAULT_HTSEQ_COUNT_DIR)
+    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list, fq1_list=samp1, fq2_list=samp2, inp1_list=inp1, inp2_list=inp2, base_bam_dir=opt.align_dir, base_count_dir=DEFAULT_HTSEQ_COUNT_DIR, base_edger_dir=DEFAULT_EDGER_DIFF_EXPR_DIR)
 
     if assay == ASSAY_RNA:
         xcmd.append("###### Handling RNA-seq here ")
@@ -261,7 +268,7 @@ def maybeNoneDict(keys, values):
         return dict(zip(keys, values))
 
 class Experiment(object):
-    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None, base_count_dir=None):
+    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None, base_count_dir=None, base_edger_dir=None):
         self.expName = expName
         self.sids = sid_list # sample IDs
         self.species = {key:species for key in self.sids}
@@ -271,6 +278,7 @@ class Experiment(object):
         self.i2 = maybeNoneDict(self.sids, inp2_list)
         self.base_bam_dir = base_bam_dir
         self.base_count_dir = base_count_dir
+        self.base_edger_dir = base_edger_dir
         pass
 
     def getBamDirForSample(self, sampName):
@@ -281,36 +289,47 @@ class Experiment(object):
 
     def getFqPairForSample(self, sampName):
         return (self.f1[sampName], self.f2[sampName])
+
     def getSpeciesForSample(self, sampName):
         return self.species[sampName]
 
-    def getAlignedBamFilenameForSample(self, sampName):
+    def getAlignedBamForSample(self, sampName):
         return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
         return self.species[sampName]
 
-    def getCountDirForSample(self, sampName):
+    def getCountDirForSample(self, sampName): # returns a single directory full path (string)
         return os.path.join(self.base_count_dir, self.expName, sampName)
 
-    def getCountFileForSample(self, sampName):
+    def getCountFileForSample(self, sampName): # returns a single file path (string)
         htseq_file_base = "htseq_count." + self.expName + "." + sampName + ".matrix.txt"
         return os.path.join(self.getCountDirForSample(sampName), htseq_file_base)
 
+    def getAllCountFiles(self): # returns a list of file paths
+        return [self.getCountFileForSample(x) for x in self.getSampleNames()] # <-- list comprehension: return a LIST of all count file paths
+
+    def getEdgeRDiffExprDir(self): # returns a single full file path (string)
+        return os.path.join(self.base_count_dir, self.base_edger_dir)
+
+    def getEdgeRDiffExprFile(self): # returns a single full file path (string)
+        return os.path.join(self.getEdgeRDiffExprDir(), "edgeR." + self.expName + ".out.txt")
 
 
-class ExperimentHolder(object):
-    """Holds all the meta-data for our in-progress project."""
-    def __init__(self):
-        self.exps = dict()
-        pass
 
-    def addExp(self, expObj):
-        xAssert(isinstance(expObj, (ExperimentHolder)))
-        xAssert(expObj.name not in self.exps)
-        self.exps[expName] = expObj
 
-    def getExp(self, expName):
-        return self.exps[expName]
-        pass
+#class ExperimentHolder(object):
+#    """Holds all the meta-data for our in-progress project."""
+#    def __init__(self):
+#        self.exps = dict()
+#        pass
+#
+#    def addExp(self, expObj):
+#        xAssert(isinstance(expObj, (ExperimentHolder)))
+#        xAssert(expObj.name not in self.exps)
+#        self.exps[expName] = expObj
+#
+#    def getExp(self, expName):
+#        return self.exps[expName]
+#        pass
 
 
 class OurScript(object):
@@ -319,10 +338,19 @@ class OurScript(object):
         self.lines = ["#!/bin/bash -u"
                       , "set -e"
                       , "set -o pipefail"]
+        self.lines.append("")
+        self.lines.append("### You can run this script with a command like one of these:")
+        self.lines.append("###                                           * bash ./this_script_name.sh")
+        self.lines.append("###             Or submit it to a cluster:    * qsub --some-options ./this_script_name.sh")
+        self.lines.append("")
         pass
 
     def append(self, text):
         self.lines.append(text) # add exactly one line
+        return
+
+    def appendMkDir(self, dirpath):
+        self.append("mkdir -p " + enquote(dirpath) + "")
         return
 
     def appendCheckForRequiredFiles(self, file_list):
@@ -370,17 +398,19 @@ def handleRNA(groups, script_obj, exper=None):
     xAssert(isinstance(exper, (Experiment)))
     for sampName in exper.getSampleNames():
         (s1, s2) = exper.getFqPairForSample(sampName)
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), outbam=exper.getAlignedBamFilenameForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), outbam=exper.getAlignedBamForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
         pass
 
+    # ========= Handle COUNTING of reads -> feature_level_counts =========
     for sampName in exper.getSampleNames():
         theSpecies   = exper.getSpeciesForSample(sampName)
         theGtf       = getAnnot(theSpecies, "gtf")
-        countThisBam = exper.getAlignedBamFilenameForSample(sampName)
+        countThisBam = exper.getAlignedBamForSample(sampName)
         generateHtseqCountCmd(bam=countThisBam, gtf=theGtf, outdir=exper.getCountDirForSample(sampName), outfile=exper.getCountFileForSample(sampName), script_obj=script_obj)
         pass
 
-    # Ok, now we have the aligned reads. Count them and then run differential expression
+    # ========= Handle differential expression using edgeR =========
+    generateEdgeRCmd(count_files=exper.getAllCountFiles(), groups=groups, outdir=exper.getEdgeRDiffExprDir(), outfile=exper.getEdgeRDiffExprFile(), script_obj=script_obj) # Note: this will call a custom edgeR script, which is also in this same repository.
 
 
     return
@@ -419,13 +449,26 @@ def getAnnot(assembly, thing=None):
         return vals[thing]
 
 def generateHtseqCountCmd(bam, gtf, outdir, outfile, script_obj):
+    script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
     sortedbam = bam + ".sorted_by_name.bam"
-    script_obj.append("mkdir -p " + outdir)
-    script_obj.append(SAMTOOLS_PATH + " sort -n " + bam + " > " + sortedbam)
+    script_obj.append(" ".join([SAMTOOLS_PATH, "sort -n", bam, ">", sortedbam])) # sort by NAME and not position! That's just a thing that HTSeq needs/prefers if it's to handle paired-end files properly
     ht_params = " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id "
-    cmd = HTSEQ_COUNT_PATH + " " + ht_params + " " + sortedbam + " " + gtf + " > " + outfile
+    cmd       = " ".join([HTSEQ_COUNT_PATH, ht_params, sortedbam, gtf, ">", outfile])
     script_obj.append(cmd)
     return
+
+
+def generateEdgeRCmd(count_files, groups, outdir, outfile, script_obj):
+    script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
+    cmd = RSCRIPT_PATH + " " + EDGER_SCRIPT
+    cmd += " --verbose "
+    cmd += " --groups=" + enquote(DELIM_FOR_ARGS_TO_EDGER_SCRIPT.join(groups))
+    cmd += " --countfiles=" + enquote(DELIM_FOR_ARGS_TO_EDGER_SCRIPT.join(count_files))
+    cmd += " --outfile=" + enquote(outfile)
+    script_obj.append(cmd)
+    return
+
+
 
 
 def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=None, aligner=None, script_obj=None):
@@ -478,7 +521,7 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
     script_obj.appendScriptExitIfAllFilesExist(file_list=[aligned_sorted_bam])     # exit EARLY if all the output files already exist
     script_obj.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
 
-    script_obj.append("mkdir -p " + enquote(outdir))
+    script_obj.appendMkDir(outdir)
     script_obj.append(cmd) # the actual alignment command!
     script_obj.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
     # if ALL the generated files already exist, then do not run this script!
