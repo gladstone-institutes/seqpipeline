@@ -37,29 +37,28 @@ BOWTIE_PATH             = "bowtie2"
 SAMTOOLS_PATH           = "samtools"
 HTSEQ_COUNT_PATH        = "htseq-count"
 RSCRIPT_PATH            = "Rscript" # <-- part of the default R install
-EDGER_SCRIPT            = "run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
-GEM_JAR_PATH            = "gem.jar" # peak caller for TF / narrow peaks with motifs
+EDGER_SCRIPT            = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
+GEM_JAR_PATH            = "/data/applications/2015_06/bin/gem.jar" # peak caller for TF / narrow peaks with motifs
 JAVA_PATH               = "java" # needed for GEM.jar
-BCP_PATH                = "bcp" # peak caller, good on broad peaks
+BCP_PATH                = "BCP_HM" # peak caller, good on broad peaks
 
 GEM_DEFAULT_READ_DIST_FILE = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/A-2016-08-August/github_seqpipeline/resources/GEM_Read_Distribution_default.txt"
-GEM_RAM_GB         = 25  # in gigabytes. Sometimes crashes if it's < 10
+GEM_RAM_GB        = 25  # in gigabytes. Sometimes crashes if it's < 10
 
-TOPHAT_N_THREADS  = 4
-BOWTIE_N_THREADS  = 4
+TOPHAT_N_THREADS   = 4
+BOWTIE_N_THREADS   = 4
 SAMTOOLS_N_THREADS = BOWTIE_N_THREADS
 # You probably won't need to change anything below... hopefully
 # ==================================================================================
 # ==================================================================================
 
-NUM_DIGITS_PADDING_SCRIPT_NAMES  = 4    # e.g. "script_1.sh" becomes "script_0001.sh" (4 digits)
 EXIT_CODE_IF_MISSING_FILE        = 49   # just some arbitrary non-zero exit code number
 LITERAL_BACKSLASH                = "\\" # <-- reduces to just one backslash
 LITERAL_DQUOTE                   = "\""
 
-DEFAULT_SCRIPT_PREFIX       = "PIPELINE_SCRIPT_"
 DEFAULT_OUTPUT_BASEDIR      = "./"
-DEFAULT_ALIGN_DIR           = "Pipeline_01_Alignment"
+DEFAULT_ALIGN_BOWTIE_DIR    = "Pipeline_01b_Align_Bowtie_Dir"
+DEFAULT_ALIGN_TOPHAT_DIR    = "Pipeline_01t_Align_Tophat_Dir"
 DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
 DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
 DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_GEM_Peak_Dir"
@@ -136,6 +135,7 @@ def tar_up_that_annotation():
     return
 
 
+
 def dieBadArgs(errMsg):
     sys.exit("ERROR: Problem with the command line arguments! Specifically: " + errMsg + ". Try using '--help' to see all the possible arguments.")
     return
@@ -147,11 +147,30 @@ Written for Python 2.7+ by Alex Williams, 2016. (Python 2.7 is needed for the 'a
 
 What this program does:
 
-1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
+1) a) First, you provide the details about an experiment and the associated samples names and input FASTQ files.
+   b) Then, you run this 'pipeline.py' program. An example command is listed below in section (2)
+   c) 'pipeline.py' does not actually perform any bioinformatics analysis directly---instead,
+      it generates a shell script with a list of commands.
+   d) You then would want to run that shell script (let's call it 'script.sh') either
+      directly ('bash script.sh') or by submitting it to a compute
+      cluster (e.g. 'qsub --options-here script.sh')
+   e) When the script runs, it will take quite some time. The script will (slowly) generate a bunch of output
+      directories, each with one step of the analysis process. The default names are:
+         * Pipeline_01t_Alignment_Tophat
+         * Pipeline_01b_Alignment_Bowtie
+         * Pipeline_02_HTSeq_Count_Dir
+         * Pipeline_03_EdgeR_Diff_Expr_Dir
+         * ... etc.
+
+Important caveats to be aware of:
+   * You will need to specify FULL PATHS to everything if you are planning on running the output script on a **cluster**!
 
 2) You run a command line invocation like:
-     python2  pipeline.py --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="MOUSE_TEST_OUTPUT_PREFIX"
-        * Note that FULL PATHS are specified since this is on a cluster.
+     python2  pipeline.py  --script="script_test.sh" --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9
+        * Note that FULL PATHS are specified since this example is for a cluster.
+
+3) Details: the '--outdir' is the location where you want the script to generate OUTPUT
+   Details: the '--script' is the name of the actual script to generate. One output script is generated per invocation of this program.
 
 Note that this is actual test data (a small set of reads from mouse chr19) that you can download:
       a1.mm9.chr19.fq.gz   (these reads were pre-selected to align to mm9, so 100% of them should align.)
@@ -174,7 +193,7 @@ Version history: (none yet)
     #parser.add_argument('--sup', '-s', dest='sup', default=None, metavar="\"UMI_LEFT,LINKER_LEFT,UMI_RIGHT,LINKER_RIGHT\"", type=str, help="Default: if unspecified (or set as --sup=GUESS), we will just guess the UMI lengths by looking at the consensus sequence of the first 1000 reads (and the linker wil be assumed to be ZERO bases--it will be included as part of the 'payload' sequence). 'Sup' stands for 'Supplementary' lengths (note: numbers, NOT actual sequence) for the UMI_LEFT, LINKER_LEFT, UMI_RIGHT, and LINKER_RIGHT.\nExample: --sup=\"8,2,2,5\"\n   * for a sample with an 8+5 UMI and linkers of length 2.")
 
     parser.add_argument('-v',  '--verbose', dest='verbose', action='store_true', help="Verbose debugging")
-    parser.add_argument('--groups', '-g', type=str, default=None, dest='groups', help="Specify experiment groups (numeric). Must be the same length as the number of files.")
+    parser.add_argument('--groups', '-g', type=str, default=None, dest='groups', help="Specify experiment groups (numeric). Must be the same length as the number of files, and must be sequentially numbered with the lowest group being 1. Can be 'NA' or blank for samples that are not associated with a group (like ChIP inputs). OK example: --groups='1,1,2,3,,,4,4' (Note the two blank samples!).")
 
     parser.add_argument('--basedir', '-b', type=str, default=None, dest='basedir', help="Optional. Specify a base directory to prepend to all paths.!")
 
@@ -195,8 +214,8 @@ Version history: (none yet)
     
     parser.add_argument('--delim', type=str, default=',', dest='delim', help="Default file/group delimiter. Normally should be a comma, unless you're doing something very unusual.")
 
-    parser.add_argument('--out', '-o', type=str, default=DEFAULT_SCRIPT_PREFIX, dest='script_prefix', help="The output script files to write. For example, --out=PIPELINE would generate files with names like: PIPELINE_001.sh, PIPELINE_002.sh, etc. Can be a path with a folder component as well.")
-    parser.add_argument('--outdir'   , type=str, default=None, dest='outdir', help="Optional. Specify a base output directory. Must already exists. Default is the current directory.")
+    parser.add_argument('--script', type=str, default=None, dest='scriptname', help="The output script file to write, e.g. --script='/path/to/script.sh' ")
+    parser.add_argument('--outdir', '-o'   , type=str, default=None, dest='outdir', help="Optional. Specify a base output directory. Must already exists. Default is the current directory.")
 
     parser.add_argument('--debug-tar-annotations', dest="debug_tar_annotations", action='store_true', help="A debug command only for setting up this software. Generates a tar command that can be used to save the annotation data in one place.")
 
@@ -214,7 +233,7 @@ Version history: (none yet)
 
     argAssert(opt.species is not None, "A species must be specified! It must be one species for ALL samples currently. Example species: 'mm9' or 'danRer7' or 'hg19'.")
     argAssert(opt.rna_samples is None or (opt.chip_samples is None and opt.chip_inputs is None), "You cannot specify BOTH RNA-seq and ALSO ChIP-seq at the same time! Pick either RNA-seq or ChIP-seq")
-    argAssert(opt.groups is not None, "You must specify the groups that each sample belongs to, or 'NA' or a blank value.")
+    argAssert(opt.groups is not None, "You must specify the groups that each sample belongs to, or either 'NA' or a blank value for files that are not direclty associated with a group (such as ChIP inputs).")
 
     opt.outdir = DEFAULT_OUTPUT_BASEDIR if opt.outdir is None else opt.outdir
 
@@ -247,6 +266,10 @@ Version history: (none yet)
     argAssert(isSameLenOrNone(samp1, samp2), "Forward and reverse MATE PAIRS must have the same number of files!")
 
     groups = opt.groups.split(opt.delim)
+    
+    are_groups_ok = [(g.isdigit() and int(g) > 0) or g == '' or g is None or g.upper() == 'NA' for g in groups]
+    argAssert(all(are_groups_ok), "Some of your input groups were not in the valid set of being either a number >= 1, the literal text 'NA', or totally blank. Fix the input groups!")
+
     argAssert(len(groups) == len(samp1), "Somehow your '--groups' was not equal in length to your specified number of sample files!")
     verbosePrint("Groups: " + str(groups))
 
@@ -256,14 +279,17 @@ Version history: (none yet)
 
     xcmd = OurScript()
 
+    base_bam_subdirectory_only = DEFAULT_ALIGN_TOPHAT_DIR if (assay == ASSAY_RNA) else DEFAULT_ALIGN_BOWTIE_DIR
+
     eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list
                      , fq1_list=samp1, fq2_list=samp2
                      , inp1_list=inp1, inp2_list=inp2
-                     ,   base_bam_dir=pathWithBase(opt.outdir, DEFAULT_ALIGN_DIR)
+                     ,   base_bam_dir=pathWithBase(opt.outdir, base_bam_subdirectory_only)
                      , base_count_dir=pathWithBase(opt.outdir, DEFAULT_HTSEQ_COUNT_DIR)
                      , base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR)
                      , base_bcp_peak_dir=pathWithBase(opt.outdir, DEFAULT_BCP_PEAK_DIR)
-                     , base_gem_peak_dir=pathWithBase(opt.outdir, DEFAULT_GEM_PEAK_DIR))
+                     , base_gem_peak_dir=pathWithBase(opt.outdir, DEFAULT_GEM_PEAK_DIR)
+                 )
 
     xcmd.append("echo 'First, we are checking to make sure all the FASTQ input files exist...'")
     xcmd.appendCheckForRequiredFiles(file_list=eee.getListOfAllFqFiles())
@@ -279,18 +305,23 @@ Version history: (none yet)
         sys.exit("Something went wrong (programming bug)---this assay type is not recognized!")
         pass
 
-    xcmd.writeToDisk(script_prefix=opt.script_prefix)
+    xcmd.writeToDisk(scriptname=opt.scriptname)
     
     return  # End of command-line-reading function
 
 
-def assertType(x, ok_types):
+def assertType(x, ok_types, none_ok=False):
+    if none_ok and x is None:
+        return # this is ok!
+
     if (not isinstance(ok_types, (tuple, type))):
         raise Exception("The 'ok_types' argument must be a 'tuple' or a 'type'.")
     # Require that everything in the list_of_things is one of the "ok_types"
     xAssert(isinstance(x, ok_types), "We were looking for one of these types: "+str(ok_types)+", but instead we got a "+str(type(x))+"")
 
 def withoutNone(aaa):
+    if aaa is None:
+        aaa = []
     return [x for x in aaa if x is not None] # remove NONE elements
 
 
@@ -338,8 +369,6 @@ class Experiment(object):
     def getAlignedInputBamForSample(self, sampName):  # returns: string (single file path)
         return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
 
-
-
     def getCountDirForSample(self, sampName): # returns: string (a single directory full path)
         return os.path.join(self.base_count_dir, self.expName, sampName)
 
@@ -360,6 +389,9 @@ class Experiment(object):
 
     def getGemPeakDir(self, sampName): # returns: string (single full file path)
         return os.path.join(self.base_gem_peak_dir, self.expName, sampName)
+
+    def getGemPeakFile(self, sampName): # returns: string (single full file path)
+        return os.path.join(self.getGemPeakDir(sampName), "gem_result.htm")
 
 
 
@@ -401,40 +433,50 @@ class OurScript(object):
         return
 
     def appendCheckForRequiredFiles(self, file_list):
-        assertType(file_list, list)
+        # File list can be a list of files or NONE (none just means we don't do anything)
+        assertType(file_list, list, none_ok=True)
         file_list = withoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
-        if (len(file_list) == 0):
-            return # no need to do anything if we have zero items
         for f in file_list:
+            self.append("")
+            self.append("# ===== Checking for a required file")
             self.append("if [[ ! -e " + enquote(f) + " ]]; then")
-            self.append("      echo '[ERROR] Cannot find the following required file, which we expect to exist: <" + f + ">" + "'")
-            self.append("      exit " + str(EXIT_CODE_IF_MISSING_FILE)) # exit with a somewhat arbitrary code number if there is a missing file
+            self.append("    echo '[ERROR] Cannot find the following required file, which we expect to exist: <" + f + ">" + "'")
+            self.append("    exit " + str(EXIT_CODE_IF_MISSING_FILE)) # exit with a somewhat arbitrary code number if there is a missing file
             self.append("fi")
+            self.append("")
             pass
         return
 
-    def appendScriptExitIfAllFilesExist(self, file_list):
-        assertType(file_list, list)
-        file_list = withoutNone(file_list) # make sure it's a [ ] list, and not just like ONE file someone passed in
-        if (len(file_list) == 0):
-            return # no need to do anything if we have zero items
+    def appendCommandUnlessFilesExist(self, check_files, cmd_if_files_missing, required_prereqs=[], required_output=[]):
+        assertType(check_files, list)
+        assertType(cmd_if_files_missing, str)
 
-        multiIfString = "if " + " && ".join(  [ "[[ -e " + enquote(g) + " ]]" for g in file_list ] ) # <-- python list comprehension that generates results like "if [[ -e myFile ]] && [[ -e file2 ]] && [[ -e file3 ]]"
+        self.appendCheckForRequiredFiles(required_prereqs) # make sure any prereqs (if any) actually exist
+
+        check_files = withoutNone(check_files) # make sure it's a [ ] list, and not just like ONE file someone passed in
+        xAssert(len(check_files) >= 1)
+        multiIfString = "if " + " && ".join(  [ "[[ -e " + enquote(g) + " ]]" for g in check_files ] ) # <-- python list comprehension that generates results like "if [[ -e myFile ]] && [[ -e file2 ]] && [[ -e file3 ]]"
+        self.append("\n#-----------------------")
         self.append(multiIfString)
         self.append("then")
-        self.append("    echo '[OK] All the specified output files already exist--so we are exiting the script now.' ")
-        self.append("    exit 0")
+        self.append("    echo '[SKIPPING] All the specified output files already exist--so we are skipping this step' ")
+        self.append("else")
+        self.append("    echo '[RUNNING]...'")
+        self.append(cmd_if_files_missing)
         self.append("fi")
+        self.append("#-----------------------\n")
+
+        self.appendCheckForRequiredFiles(required_output) # make sure we generated the required files (if any)
+
         return
         
-
-    def writeToDisk(self, script_prefix=None):
-        if (script_prefix is None):
+    def writeToDisk(self, scriptname=None):
+        if (scriptname is None):
             print("\n".join(self.lines)) # just print to stdout
         else:
             global global_num_script_files_written
             global_num_script_files_written += 1
-            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_DIGITS_PADDING_SCRIPT_NAMES) + ".sh"
+            scriptname = scriptname
             with open(scriptname, 'w') as fff:
                 fff.write("\n".join(self.lines) + "\n")
                 pass
@@ -445,7 +487,6 @@ class OurScript(object):
 
 def handleRNA(groups, script_obj, exper=None):
     xAssert(isinstance(exper, (Experiment)))
-
 
     for sampName in exper.getSampleNames():
         (s1, s2) = exper.getFqPairForSample(sampName)
@@ -500,29 +541,26 @@ def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script
     return
 
 
-def getAnnot(assembly, thing=None):
+def getAnnot(assembly, key=None):
     # Sort of a weird wrapper to an array. Probably not the most elegant way to do this, but should be OK for our low-performance needs. Easy to change in the future!
     # 'None' is how you get the whole data structure
-    xAssert(thing in [None, 'gtf', 'bowtie_index', 'fasta', 'fa_by_chrom', 'chr_sizes'], "Invalid annotation requested") # sanity check
+    xAssert(key in [None, 'gtf', 'bowtie_index', 'fasta', 'fa_by_chrom', 'chr_sizes'], "Invalid annotation requested") # sanity check
     vals = dict()
     vals['bowtie_index'] = global_annot[assembly]
     vals['gtf'         ] = global_annot[assembly] + ".gtf"
     vals['fasta'       ] = global_annot[assembly] + ".fa"
     vals['fa_by_chrom' ] = global_annot[assembly] + "_chromosome_fastas"
     vals['chr_sizes'   ] = global_annot[assembly] + ".chrom.sizes.txt"
-
-    if thing is None:
-        return vals
-    else:
-        return vals[thing]
+    return vals if key is None else vals[key]
 
 def generateHtseqCountCmd(bam, gtf, outdir, outfile, script_obj):
+    sortedbam                 = bam + ".sorted_by_name.bam"
+    samtools_sort_by_name_cmd = " ".join([SAMTOOLS_PATH, "sort -n", bam, ">", sortedbam])
+    ht_params                 = " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id "
+    ht_cmd                    = " ".join([HTSEQ_COUNT_PATH, ht_params, sortedbam, gtf, ">", outfile])
     script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
-    sortedbam = bam + ".sorted_by_name.bam"
-    script_obj.append(" ".join([SAMTOOLS_PATH, "sort -n", bam, ">", sortedbam])) # sort by NAME and not position! That's just a thing that HTSeq needs/prefers if it's to handle paired-end files properly
-    ht_params = " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id "
-    cmd       = " ".join([HTSEQ_COUNT_PATH, ht_params, sortedbam, gtf, ">", outfile])
-    script_obj.append(cmd)
+    script_obj.appendCommandUnlessFilesExist([sortedbam], samtools_sort_by_name_cmd, required_prereqs=[bam]      , required_output=[sortedbam]) # sort by NAME and not position! That's just a thing that HTSeq needs/prefers if it's to handle paired-end files properly
+    script_obj.appendCommandUnlessFilesExist([outfile]  , ht_cmd                   , required_prereqs=[sortedbam], required_output=[outfile])
     return
 
 def generateBcpPeakCmd(species, outdir, expBam, ctrlBam, script_obj):
@@ -540,8 +578,6 @@ def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script
     genomeByChromFastaDir = getAnnot(species, "fa_by_chrom")
     chrSizesFile          = getAnnot(species, "chr_sizes")
 
-    script_obj.appendCheckForRequiredFiles(file_list=[expBam, ctrlBam, chrSizesFile, genomeByChromFastaDir, gemReadDistFile])
-    script_obj.appendCheckForRequiredFiles(file_list=[JAVA_PATH, GEM_JAR_PATH])
     cmd  = JAVA_PATH + " -Xmx" + GEM_RAM_GB + "G" + " -jar " + GEM_JAR_PATH
     cmd +=      " --t " + GEM_THREADS
     cmd +=      " --q " + GEM_QVAL
@@ -553,6 +589,8 @@ def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script
     cmd +=  (" --ctrl " + ctrlBam) if ctrlBam is not None else "" # can be omitted if there is NO input file
     cmd += " --f SAM --sl --outBED "
     cmd += " --out " + outdir # outprefix creates a new folder with this name, respecting existing subdirectories.
+
+    script_obj.appendCheckForRequiredFiles(file_list=[expBam, ctrlBam, chrSizesFile, genomeByChromFastaDir, gemReadDistFile])
     script_obj.append(cmd)
 
     # should check to see if the expected output file is in here...
@@ -561,13 +599,16 @@ def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script
 
 
 def generateEdgeRCmd(count_files, groups, outdir, outfile, script_obj):
-    script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
-    cmd = RSCRIPT_PATH + " " + EDGER_SCRIPT
+
+    cmd  = RSCRIPT_PATH + " " + EDGER_SCRIPT
     cmd += " --verbose "
     cmd += " --groups=" + enquote(DELIM_FOR_ARGS_TO_EDGER_SCRIPT.join(groups))
     cmd += " --countfiles=" + enquote(DELIM_FOR_ARGS_TO_EDGER_SCRIPT.join(count_files))
     cmd += " --outfile=" + enquote(outfile)
-    script_obj.append(cmd)
+
+    script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
+    script_obj.appendCheckForRequiredFiles(file_list=count_files)
+    script_obj.appendCommandUnlessFilesExist(check_files=[outfile], cmd_if_files_missing=cmd, required_prereqs=[], required_output=[outfile])
     return
 
 
@@ -614,14 +655,8 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
         raise Exception("Unrecognized aligner! We currently only know about tophat and bowtie2. Note that this is case-sensitive. This is a CODING bug and should not be related to a user-specified file. Your specified aligner was: " + aligner)
         pass
 
-    script_obj.appendScriptExitIfAllFilesExist(file_list=[aligned_sorted_bam])     # exit EARLY if all the output files already exist
-    script_obj.appendCheckForRequiredFiles(file_list=[fastq1, fastq2]) # require that these files exist (or are 'None')
-
     script_obj.appendMkDir(outdir)
-    script_obj.append(cmd) # the actual alignment command!
-    script_obj.appendCheckForRequiredFiles(file_list=[aligned_sorted_bam]) # make sure the file got generated!
-    # if ALL the generated files already exist, then do not run this script!
-
+    script_obj.appendCommandUnlessFilesExist(check_files=[aligned_sorted_bam], cmd_if_files_missing=cmd, required_prereqs=[fastq1, fastq2], required_output=[aligned_sorted_bam])
     return
 
 # Must come at the VERY END!
@@ -1024,119 +1059,6 @@ agw_get_bcp_output_path_for_sample <- function(experiment_id, sample_id) {
 }
 
 
-
-agw_de_two_groups <- function(theRG, exprDatTab, g1, g2, theGroupVec, writeOutputToThisFile=FALSE) {
-     # g1 and g2 are both NUMERIC
-     xAssert(g1 != g2)
-     xAssert(g1 >= 1);
-     xAssert(g2 >= 1);
-     D <- DGEList(counts=theRG, group=theGroupVec)
-     D <- edgeR::estimateCommonDisp(D)       
-     D <- edgeR::estimateTagwiseDisp(D) # exactTest for negative bionomial distribution
-     groupCounts        <- table(exprDatTab$expr_group)
-     bothHaveReplicates <- (groupCounts[[g1]] >= 2 && groupCounts[[g2]] >= 2)
-     if (bothHaveReplicates) {
-          et <- edgeR::exactTest(D, pair=c(g1, g2))
-     } else {
-          HARD_CODED_DISPERSION <- 0.1 # may be low for human (0.4 seems recommended?). 0.1 is recommended for mouse and other genetically-identical samples though
-          # Note about HARD_CODED_DISPERSION: this number was used by Stacia during initial analysis, so we need to keep it the same here too!
-          et <- edgeR::exactTest(D, pair=c(g1, g2), dispersion=HARD_CODED_DISPERSION)
-     }
-     tt <- data.frame(topTags(et, n=nrow(et), sort.by="none"), check.names=FALSE) # gets the FDR calculated, too
-     t.df <- tt[, c("logFC", "PValue", "FDR")] # only the three columns of interest---omit the logCPM column
-     colnames(t.df) <- paste( paste0(g1,":",g2), colnames(t.df), sep=" ")
-
-     if (writeOutputToThisFile) {
-          outTable <- data.frame("IDENTIFIER"=rownames(t.df), t.df, check.names=FALSE)
-          print0("Writing to the output file <", writeOutputToThisFile, ">")
-          write.table(outTable, file=writeOutputToThisFile, sep="\t", quote=FALSE, col.names=TRUE, row.names=FALSE)
-     }
-     return(t.df) # Return the table with logFC, PValue, FDR. It's a data frame now, instead of whatever topTags natively returns.
-}
-
-agw_handle_rna_diff_expression <- function(exid, sid, df, outdir, cmdfile) {
-     assert_type_is_b2frame(df)
-     groupcounts             <- table(df$expr_group)
-     smallest_num_replicates <- min(groupcounts)
-     xAssert(!missing(outdir)); xAssert(!grep(" ", outdir)) # no spaces in outdir!
-     append_commands(cmdfile, agw_construct_cmd(paste0("mkdir -p ", outdir)))
-     edgerOut <- file.path(outdir, paste0("edgeR_differential_expression_", exid, "", SIM_STATUS, ".tsv.txt"))
-     if (smallest_num_replicates < 2) {
-          remember_exid_failure(exid, "No replicates, skip this comparison FOR NOW ONLY.")
-     } else if (!all(sapply(count_filenames.vec, file.nonzero.exists))) {
-          remember_exid_failure(exid, "EDGER IS MISSING SOME HTSEQ INPUT FILES for that experiment ID so we are skipping this differential expression.")
-     } else if (file.exists(edgerOut)) {
-          errlog(exid, " Looks like the edgeR out ALREADY EXISTS for experiment ID ", exid, ", in the location <", edgerOut, "> so we will not be re-running it.")
-          OK_IDS[[exid]] <- "OK" # we (probably) did this properly
-     } else if (length(count_filenames.vec) != length(df$expr_group)) {
-          remember_exid_failure(exid, paste0("missing input files for experiment ", exid, ": The number of 'count filenames' is NOT equal to the length of the group vector. This means some experimental groups were not aligned and/or processed downstream."))
-          FAILED_IDS[[exid]] <- 1
-     } else {
-          print0("Running EdgeR for experiment ", exid, "...")
-          xAssert(all(sapply(count_filenames.vec, file.nonzero.exists))) # all the input files must ALREADY exist, please!
-          RG <- edgeR::readDGE(count_filenames.vec, header=FALSE) # htseq-count does NOT have a header!
-          # """Each file is assumed to contain digital gene expression data for
-          # one genomic sample or count library, with gene identifiers in the
-          # first column and counts in the second column. Gene identifiers are
-          # assumed to be unique and not repeated in any one file.  The
-          # A count of zero will be entered for any
-          # gene that was not found in any particular sample.
-          #By default, the files are assumed to be tab-delimited and to
-          # contain column headings. Other file formats can be handled by..."""
-          
-          # If there are replicates:
-          # Figure out groups for pairwise analysis
-          groups <- df$expr_group
-          xAssert(is.integer(groups))
-          if (any(sort(unique(groups)) != seq_along(unique(groups)))) {
-               errlog("ERROR 162F: the groups were NOT numbered 1-through-n with no gaps! This indicates something we did not expect in the input data.", fatal=TRUE)
-               stop()
-          }
-          
-          elist = list()
-          for (g1 in sort(unique(groups))) { # g1 and g2 are both NUMERIC GROUP IDs
-               for (g2 in sort(unique(groups))) {
-                    if (g1 >= g2) { next; } # don't double-calculate, or calculate g1 vs itself
-                    print0("Comparing group ", g1, " vs ", g2, " (comparison name is ", g1, ":", g2, ")...")
-                    elist[[ 1+length(elist) ]] <- agw_de_two_groups(theRG=RG, exprDatTab=df, g1=g1, g2=g2, theGroupVec=groups)
-               }
-          }
-          if (length(elist) > 0) {
-               eframe <- do.call(cbind, elist)
-               outTable <- data.frame("IDENTIFIER"=rownames(elist[[1]]), eframe, check.names=FALSE)
-               write.table(outTable, file=edgerOut, sep="\t", quote=FALSE, col.names=TRUE, row.names=FALSE)
-               OK_IDS[[exid]] <- "OK" # we (probably) did this properly
-          } else {
-               edgerOut <- paste0(edgerOut, "--FAILED-TO-GENERATE-RESULTS.txt")
-               write.table(c("no results generated"), file=edgerOut)
-               remember_exid_failure(exid, "Warning: did not find any group comparisons for this experiment! This may be a programming error (?) or it may be due to unusual input data.")
-          }
-          print0("Wrote results to the output file <", edgerOut, ">")
-          #topTags(et)
-          # If there are no replicates:
-          # D <- DGEList(counts=RG,group=1:2:3:4)
-          # et <- exactTest(D,dispersion=0.1)
-          ## topTags(et)
-     }
-}
-
-agw_handle_rna_counting_per_feature <- function(exid, sid, species, cmdfile) {
-     bam    <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
-     gtf    <- getAnnot(species, "gtf"); xAssert(file.nonzero.exists(gtf))
-     ccc    <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"path"
-     cccDir <- agw_get_count_path(experiment_id=exid, sample_id=sid)$"dir"
-     cerr("Validating that counts file <", ccc, "> exists for sample ", sid)
-     #htCmd <- paste0("mkdir -p ", cccDir, "; ", HTSEQ_COUNT_EXE, " --format=bam --order=pos --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id ", bam, " ", gtf, " >| ", ccc)
-     bamNameSorted <- paste0(bam, ".sorted_by_name.bam")
-     htCmd <- paste0("mkdir -p ", cccDir, "; ", SAMTOOLS_EXE, " sort -n ", bam, " > ", bamNameSorted, " && ", get_exe_path('htseq-count'), " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id ", bamNameSorted, " ", gtf, " >| ", ccc)
-     if (!file.nonzero.exists(ccc)) {
-          append_commands(cmdfile, agw_construct_cmd(htCmd)) # the command for running htseq-count
-     } else {
-          verboseStatusPrint("Not re-running HTSeq, because the output file already exists.")
-          append_commands(cmdfile, agw_construct_cmd(htCmd), comment_out=TRUE)
-     }
-     count_filenames.vec <- append(count_filenames.vec, ccc)
-}
 
 agw_handle_chip_peak_calls <- function(exid, sid, species, df_for_this_exid, cmdfile) {
      if (agw_sample_is_an_input(exid, sid, df_for_this_exid)) { # WE don't run GEM or BCP on an input sample by itself!
