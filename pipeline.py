@@ -23,39 +23,37 @@ ASSAY_CHIP = 2
 
 global_file_paths_we_already_aligned = dict()
 global_num_script_files_written = 0
-
 global_annot = dict()
+# ==================================================================================
+# ==================================================================================
+# ======= Paths to the programs we need and various other hard-coded things.
+# ======= Programs are currently assumed to be on the user's $PATH ========
 global_annot['hg19'   ] = "/data/info/genome/hg19_ensembl_igenome_with_chr/hg19.chr"
 global_annot['mm9'    ] = "/data/info/genome/mm9_ensembl_igenome_with_chr/mm9.chr"
 global_annot['danRer7'] = "/data/info/genome/danRer7_ensembl_igenome_ucsc/danRer7_ucsc"
 global_annot['galGal4'] = "/data/info/genome/galGal4_ensembl_igenome_ucsc/galGal4_ucsc"
+TOPHAT_PATH             = "tophat"
+BOWTIE_PATH             = "bowtie2"
+SAMTOOLS_PATH           = "samtools"
+HTSEQ_COUNT_PATH        = "htseq-count"
+RSCRIPT_PATH            = "Rscript" # <-- part of the default R install
+EDGER_SCRIPT            = "run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
 
-# ======= Paths to the programs we need. Assumed to be on the user's $PATH ========
-TOPHAT_PATH   = "tophat"
-BOWTIE_PATH   = "bowtie2"
-SAMTOOLS_PATH = "samtools"
-HTSEQ_COUNT_PATH = "htseq-count"
-RSCRIPT_PATH = "Rscript" # <-- part of the default R install
-EDGER_SCRIPT = "run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
-
-
-ALIGNER_TOPHAT  = TOPHAT_PATH
-ALIGNER_BOWTIE = BOWTIE_PATH
-
-
-
-TOPHAT_N_THREADS   = 4
+TOPHAT_N_THREADS  = 4
 BOWTIE_N_THREADS  = 4
 SAMTOOLS_N_THREADS = BOWTIE_N_THREADS
+# You probably won't need to change anything below... hopefully
+# ==================================================================================
+# ==================================================================================
 
-NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES = 4
-EXIT_CODE_IF_MISSING_FILE = 49 # just some arbitrary non-zero number
-LITERAL_BACKSLASH="\\" # reduces to just one backslash
-LITERAL_DQUOTE="\""
+NUM_DIGITS_PADDING_SCRIPT_NAMES  = 4    # e.g. "script_1.sh" becomes "script_0001.sh" (4 digits)
+EXIT_CODE_IF_MISSING_FILE        = 49   # just some arbitrary non-zero exit code number
+LITERAL_BACKSLASH                = "\\" # <-- reduces to just one backslash
+LITERAL_DQUOTE                   = "\""
 
-DEFAULT_SCRIPT_PREFIX     = "PIPELINE_SCRIPT_"
-DEFAULT_SPLICED_ALIGN_DIR = "Pipeline_01_Spliced_Tophat_Alignment"
-DEFAULT_DNA_ALIGN_DIR     = "Pipeline_01_DNA_Bowtie_Alignment"
+DEFAULT_SCRIPT_PREFIX       = "PIPELINE_SCRIPT_"
+DEFAULT_OUTPUT_BASEDIR      = "./"
+DEFAULT_ALIGN_DIR           = "Pipeline_01_Alignment"
 DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
 DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
 DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script also changes.
@@ -143,7 +141,7 @@ What this program does:
 1) You specify an experiment and the input FASTQ files, and perhaps a few other files.
 
 2) You run a command line invocation like:
-     python2  pipeline.py --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="MOUSE_TEST_OUTPUT_PREFIX"
+     python2  pipeline.py --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.chr19.fq.gz --groups=1,1,2,2 --species=mm9  --out="MOUSE_TEST_OUTPUT_PREFIX"
         * Note that FULL PATHS are specified since this is on a cluster.
 
 Note that this is actual test data (a small set of reads from mouse chr19) that you can download:
@@ -171,6 +169,8 @@ Version history: (none yet)
 
     parser.add_argument('--basedir', '-b', type=str, default=None, dest='basedir', help="Optional. Specify a base directory to prepend to all paths.!")
 
+
+
     parser.add_argument('--chip-samples', '--c1', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
     parser.add_argument('--chip-inputs' , '--p1', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
     parser.add_argument('--rna-samples', '--r1', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
@@ -186,9 +186,8 @@ Version history: (none yet)
     
     parser.add_argument('--delim', type=str, default=',', dest='delim', help="Default file/group delimiter. Normally should be a comma, unless you're doing something very unusual.")
 
-    parser.add_argument('--align-dir', type=str, default=None, dest='align_dir', help="Default location to put the ALIGNED reads after running tophat or bowtie. Ideally a full path.")
-
     parser.add_argument('--out', '-o', type=str, default=DEFAULT_SCRIPT_PREFIX, dest='script_prefix', help="The output script files to write. For example, --out=PIPELINE would generate files with names like: PIPELINE_001.sh, PIPELINE_002.sh, etc. Can be a path with a folder component as well.")
+    parser.add_argument('--outdir'   , type=str, default=None, dest='outdir', help="Optional. Specify a base output directory. Must already exists. Default is the current directory.")
 
     parser.add_argument('--debug-tar-annotations', dest="debug_tar_annotations", action='store_true', help="A debug command only for setting up this software. Generates a tar command that can be used to save the annotation data in one place.")
 
@@ -208,9 +207,10 @@ Version history: (none yet)
     argAssert(opt.rna_samples is None or (opt.chip_samples is None and opt.chip_inputs is None), "You cannot specify BOTH RNA-seq and ALSO ChIP-seq at the same time! Pick either RNA-seq or ChIP-seq")
     argAssert(opt.groups is not None, "You must specify the groups that each sample belongs to, or 'NA' or a blank value.")
 
+    opt.outdir = DEFAULT_OUTPUT_BASEDIR if opt.outdir is None else opt.outdir
+
     if (opt.rna_samples is not None):
         assay = ASSAY_RNA
-        opt.align_dir = DEFAULT_SPLICED_ALIGN_DIR if opt.align_dir is None else opt.align_dir
         samp1 = splitFileList(opt.rna_samples , delim=opt.delim, basedir=opt.basedir)
         samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
         inp1 = None # Rna-seq doesn't have 'input' files
@@ -218,7 +218,6 @@ Version history: (none yet)
     elif (opt.chip_samples is not None):
         argAssert(opt.chip_inputs is not None, "If you specify --chip-samples, you have to also specify --chip-inputs, but it appears that was NOT specified.")
         assay = ASSAY_CHIP
-        opt.align_dir = DEFAULT_DNA_ALIGN_DIR if opt.align_dir is None else opt.align_dir
         samp1 = splitFileList(opt.chip_samples, delim=opt.delim, basedir=opt.basedir)
         samp2 = splitFileList(opt.sample_mates, delim=opt.delim, basedir=opt.basedir)
 
@@ -251,16 +250,20 @@ Version history: (none yet)
     eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list
                      , fq1_list=samp1, fq2_list=samp2
                      , inp1_list=inp1, inp2_list=inp2
-                     , base_bam_dir=pathWithBase(opt.basedir, opt.align_dir)
-                     , base_count_dir=pathWithBase(opt.basedir, DEFAULT_HTSEQ_COUNT_DIR)
-                     , base_edger_dir=pathWithBase(opt.basedir, DEFAULT_EDGER_DIFF_EXPR_DIR))
+                     ,   base_bam_dir=pathWithBase(opt.outdir, DEFAULT_ALIGN_DIR)
+                     , base_count_dir=pathWithBase(opt.outdir, DEFAULT_HTSEQ_COUNT_DIR)
+                     , base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR))
+
+    xcmd.append("echo 'First, we are checking to make sure all the FASTQ input files exist...'")
+    xcmd.appendCheckForRequiredFiles(file_list=eee.getListOfAllFqFiles())
+    xcmd.append("")
 
     if assay == ASSAY_RNA:
         xcmd.append("###### Handling RNA-seq here ")
         handleRNA(groups=groups, script_obj=xcmd, exper=eee)
     elif assay == ASSAY_CHIP:
         xcmd.append("###### Handling ChIP-seq here ")
-        handleCHIP(groups=groups, species=opt.species, output_bam_dir=opt.align_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd)
+        handleCHIP(groups=groups, species=opt.species, output_bam_dir=eee.base_bam_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd)
     else:
         sys.exit("Something went wrong (programming bug)---this assay type is not recognized!")
         pass
@@ -311,6 +314,9 @@ class Experiment(object):
 
     def getFqPairForSample(self, sampName): # returns (2-element tuple)
         return (self.f1[sampName], self.f2[sampName])
+
+    def getListOfAllFqFiles(self): # Just a list of all *unique* fastq files, not in any particularly significant order. No "none"s
+        return withoutNone(list(set(self.f1.values()).union(self.f2.values()).union(self.i1.values()).union(self.i2.values())))
 
     def getSpeciesForSample(self, sampName): # returns: string (single assembly name)
         return self.species[sampName]
@@ -407,7 +413,7 @@ class OurScript(object):
         else:
             global global_num_script_files_written
             global_num_script_files_written += 1
-            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_ZEROS_TO_PAD_IN_SCRIPT_NAMES) + ".sh"
+            scriptname = script_prefix + "_" + str(global_num_script_files_written).zfill(NUM_DIGITS_PADDING_SCRIPT_NAMES) + ".sh"
             with open(scriptname, 'w') as fff:
                 fff.write("\n".join(self.lines) + "\n")
                 pass
@@ -418,9 +424,11 @@ class OurScript(object):
 
 def handleRNA(groups, script_obj, exper=None):
     xAssert(isinstance(exper, (Experiment)))
+
+
     for sampName in exper.getSampleNames():
         (s1, s2) = exper.getFqPairForSample(sampName)
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), outbam=exper.getAlignedBamForSample(sampName), aligner=ALIGNER_TOPHAT, script_obj=script_obj)
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=exper.getSpeciesForSample(sampName), outdir=exper.getBamDirForSample(sampName), outbam=exper.getAlignedBamForSample(sampName), aligner=TOPHAT_PATH, script_obj=script_obj)
         pass
 
     # ========= Handle COUNTING of reads -> feature_level_counts =========
@@ -434,17 +442,16 @@ def handleRNA(groups, script_obj, exper=None):
     # ========= Handle differential expression using edgeR =========
     generateEdgeRCmd(count_files=exper.getAllCountFiles(), groups=groups, outdir=exper.getEdgeRDiffExprDir(), outfile=exper.getEdgeRDiffExprFile(), script_obj=script_obj) # Note: this will call a custom edgeR script, which is also in this same repository.
 
-
     return
 
 def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_obj):
     for i in range(len(samp1)):
         s1 = samp1[i]
         s2 = getListItemUnlessNone(samp2, index=i)
-        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
+        generateAlignmentCmd(fastq1=s1, fastq2=s2, species=species, outdir=output_bam_dir, aligner=BOWTIE_PATH, script_obj=script_obj)
         p1 = inp1[i]
         p2 = getListItemUnlessNone(inp2, index=i)
-        generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=ALIGNER_BOWTIE, script_obj=script_obj)
+        generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=BOWTIE_PATH, script_obj=script_obj)
         # now run gem or whatever
         # finally, do something else
         pass
@@ -512,7 +519,7 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
     all_reads_bam       = os.path.join(outdir, "all.bam") # intermediate
     aligned_sorted_bam  = outbam
 
-    if aligner == ALIGNER_TOPHAT:
+    if aligner == TOPHAT_PATH:
         gtf  = getAnnot(species, "gtf")    # <-- only actually used by tophat
         cmd  = TOPHAT_PATH + " -o " + outdir 
         cmd += " " + "--min-anchor=5 --segment-length=25 --no-coverage-search --segment-mismatches=2 --splice-mismatches=2 --microexon-search "
@@ -525,7 +532,7 @@ def generateAlignmentCmd(fastq1, fastq2=None, species=None, outdir=None, outbam=
         TOPHAT_HARDCODED_BAM_OUT_NAME = "accepted_hits.bam" # tophat always generates files with this output name, no matter what.
         tophat_outbam = os.path.join(outdir, TOPHAT_HARDCODED_BAM_OUT_NAME)
         cmd += "\n" + "test -e " + aligned_sorted_bam + " || mv -f " + tophat_outbam + " " + aligned_sorted_bam # move it to the FINAL bam location. Which might be the same! "test" is so that we ONLY MOVE IT if the target does not already exist. Otherwise do not move it. So if the filenames are the same, then don't move it, since that generates an error code.
-    elif aligner == ALIGNER_BOWTIE:
+    elif aligner == BOWTIE_PATH:
         inputFqString = " ".join(["-1", enquote(fastq1), "-2", enquote(fastq2)])   if isPaired else   " ".join(["-U", enquote(fastq1)])
         cmd  = BOWTIE_PATH
         cmd += " " + "--threads=" + str(BOWTIE_N_THREADS)
