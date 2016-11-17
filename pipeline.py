@@ -38,6 +38,12 @@ SAMTOOLS_PATH           = "samtools"
 HTSEQ_COUNT_PATH        = "htseq-count"
 RSCRIPT_PATH            = "Rscript" # <-- part of the default R install
 EDGER_SCRIPT            = "run_edgeR_diff_expr.R" # this is a CUSTOM SCRIPT that we run
+GEM_JAR_PATH            = "gem.jar" # peak caller for TF / narrow peaks with motifs
+JAVA_PATH               = "java" # needed for GEM.jar
+BCP_PATH                = "bcp" # peak caller, good on broad peaks
+
+GEM_DEFAULT_READ_DIST_FILE = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/A-2016-08-August/github_seqpipeline/resources/GEM_Read_Distribution_default.txt"
+GEM_RAM_GB         = 25  # in gigabytes. Sometimes crashes if it's < 10
 
 TOPHAT_N_THREADS  = 4
 BOWTIE_N_THREADS  = 4
@@ -56,6 +62,9 @@ DEFAULT_OUTPUT_BASEDIR      = "./"
 DEFAULT_ALIGN_DIR           = "Pipeline_01_Alignment"
 DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
 DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
+DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_GEM_Peak_Dir"
+DEFAULT_GEM_PEAK_DIR        = "Pipeline_05g_BCP_Peak_Dir"
+
 DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script also changes.
 
 opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
@@ -252,7 +261,9 @@ Version history: (none yet)
                      , inp1_list=inp1, inp2_list=inp2
                      ,   base_bam_dir=pathWithBase(opt.outdir, DEFAULT_ALIGN_DIR)
                      , base_count_dir=pathWithBase(opt.outdir, DEFAULT_HTSEQ_COUNT_DIR)
-                     , base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR))
+                     , base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR)
+                     , base_bcp_peak_dir=pathWithBase(opt.outdir, DEFAULT_BCP_PEAK_DIR)
+                     , base_gem_peak_dir=pathWithBase(opt.outdir, DEFAULT_GEM_PEAK_DIR))
 
     xcmd.append("echo 'First, we are checking to make sure all the FASTQ input files exist...'")
     xcmd.appendCheckForRequiredFiles(file_list=eee.getListOfAllFqFiles())
@@ -263,7 +274,7 @@ Version history: (none yet)
         handleRNA(groups=groups, script_obj=xcmd, exper=eee)
     elif assay == ASSAY_CHIP:
         xcmd.append("###### Handling ChIP-seq here ")
-        handleCHIP(groups=groups, species=opt.species, output_bam_dir=eee.base_bam_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd)
+        handleCHIP(groups=groups, species=opt.species, output_bam_dir=eee.base_bam_dir, samp1=samp1, samp2=samp2, inp1=inp1, inp2=inp2, script_obj=xcmd, exper=eee)
     else:
         sys.exit("Something went wrong (programming bug)---this assay type is not recognized!")
         pass
@@ -290,7 +301,7 @@ def maybeNoneDict(keys, values):
         return dict(zip(keys, values))
 
 class Experiment(object):
-    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list=None, inp2_list=None, base_bam_dir=None, base_count_dir=None, base_edger_dir=None):
+    def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list, inp2_list, base_bam_dir, base_count_dir, base_edger_dir, base_bcp_peak_dir, base_gem_peak_dir):
         xAssert(isinstance(sid_list, (list, tuple)))
         xAssert(isinstance(expName, (str)))
         self.expName = expName
@@ -324,6 +335,11 @@ class Experiment(object):
     def getAlignedBamForSample(self, sampName):  # returns: string (single file path)
         return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
 
+    def getAlignedInputBamForSample(self, sampName):  # returns: string (single file path)
+        return os.path.join(self.getBamDirForSample(sampName), "accepted_hits.bam")
+
+
+
     def getCountDirForSample(self, sampName): # returns: string (a single directory full path)
         return os.path.join(self.base_count_dir, self.expName, sampName)
 
@@ -334,11 +350,16 @@ class Experiment(object):
         return [self.getCountFileForSample(x) for x in self.getSampleNames()] # <-- list comprehension: return a LIST of all count file paths
 
     def getEdgeRDiffExprDir(self): # returns: string (single full file path)
-        return os.path.join(self.base_count_dir, self.base_edger_dir)
+        return os.path.join(self.base_edger_dir)
 
     def getEdgeRDiffExprFile(self): # returns: string (single full file path)
         return os.path.join(self.getEdgeRDiffExprDir(), "edgeR." + self.expName + ".out.txt")
 
+    def getBcpPeakDir(self, sampName): # returns: string (single full file path)
+        return os.path.join(self.base_bcp_peak_dir, self.expName, sampName)
+
+    def getGemPeakDir(self, sampName): # returns: string (single full file path)
+        return os.path.join(self.base_gem_peak_dir, self.expName, sampName)
 
 
 
@@ -433,10 +454,9 @@ def handleRNA(groups, script_obj, exper=None):
 
     # ========= Handle COUNTING of reads -> feature_level_counts =========
     for sampName in exper.getSampleNames():
-        theSpecies   = exper.getSpeciesForSample(sampName)
-        theGtf       = getAnnot(theSpecies, "gtf")
-        countThisBam = exper.getAlignedBamForSample(sampName)
-        generateHtseqCountCmd(bam=countThisBam, gtf=theGtf, outdir=exper.getCountDirForSample(sampName), outfile=exper.getCountFileForSample(sampName), script_obj=script_obj)
+        theGtf = getAnnot(exper.getSpeciesForSample(sampName), "gtf")
+        theBam = exper.getAlignedBamForSample(sampName)
+        generateHtseqCountCmd(bam=theBam, gtf=theGtf, outdir=exper.getCountDirForSample(sampName), outfile=exper.getCountFileForSample(sampName), script_obj=script_obj)
         pass
 
     # ========= Handle differential expression using edgeR =========
@@ -444,7 +464,7 @@ def handleRNA(groups, script_obj, exper=None):
 
     return
 
-def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_obj):
+def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script_obj, exper):
     for i in range(len(samp1)):
         s1 = samp1[i]
         s2 = getListItemUnlessNone(samp2, index=i)
@@ -454,6 +474,21 @@ def handleCHIP(groups, species, output_bam_dir, samp1, samp2, inp1, inp2, script
         generateAlignmentCmd(fastq1=p1, fastq2=p2, species=species, outdir=output_bam_dir, aligner=BOWTIE_PATH, script_obj=script_obj)
         # now run gem or whatever
         # finally, do something else
+        pass
+
+    for sampName in exper.getSampleNames():
+        expBam  = exper.getAlignedBamForSample(sampName)
+        ctrlBam = None # exper.getAlignedBamForSample(sampName)
+        peakCaller = GEM_JAR_PATH
+        if peakCaller == GEM_JAR_PATH:
+            generateGemPeakCmd(species=exper.getSpeciesForSample(sampName), outdir=exper.getGemPeakDir(sampName), expBam=expBam, ctrlBam=ctrlBam, script_obj=script_obj)
+            pass
+        elif peakCaller == BCP_PATH:
+            generateBcpPeakCmd(species=exper.getSpeciesForSample(sampName), outdir=exper.getBcpPeakDir(sampName), expBam=expBam, ctrlBam=ctrlBam, gemReadDistFile=GEM_READ_DISTRIBUTION_DEFAULT, script_obj=script_obj)
+            pass
+        else:
+            raise Exception("Programming bug -- unsupported peak caller")
+            pass
         pass
 
     # peak call
@@ -488,6 +523,40 @@ def generateHtseqCountCmd(bam, gtf, outdir, outfile, script_obj):
     ht_params = " --format=bam --order=name --mode=intersection-nonempty --stranded=no --minaqual=10 --type=exon --idattr=gene_id "
     cmd       = " ".join([HTSEQ_COUNT_PATH, ht_params, sortedbam, gtf, ">", outfile])
     script_obj.append(cmd)
+    return
+
+def generateBcpPeakCmd(species, outdir, expBam, ctrlBam, script_obj):
+    '''BCP is a good all-purpose peak caller. It works especially well for histone-related (broad) peaks. We do not use it for the narrow TF-related peaks, where GEM is preferred.'''
+    script_obj.append("exit(1); # Not set up yet... error")
+    return
+
+def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script_obj):
+    '''Gem is best for TF-related peaks (ones with sequence motifs)'''
+
+    GEM_THREADS      = 1 # gem uses a ton of threads for some reason, so 1 is even conservative
+    GEM_QVAL         = 2	      # sets the q-value threshold (-log10, so 2 = 0.01)
+    GEM_KMIN         = 6	      # minimum kmer length. From our default UCSF settings used in the 'Monkey' pipeline
+    GEM_KMAX         = 13	      # maximum kmer length. From our default UCSF settings used in the 'Monkey' pipeline
+    genomeByChromFastaDir = getAnnot(species, "fa_by_chrom")
+    chrSizesFile          = getAnnot(species, "chr_sizes")
+
+    script_obj.appendCheckForRequiredFiles(file_list=[expBam, ctrlBam, chrSizesFile, genomeByChromFastaDir, gemReadDistFile])
+    script_obj.appendCheckForRequiredFiles(file_list=[JAVA_PATH, GEM_JAR_PATH])
+    cmd  = JAVA_PATH + " -Xmx" + GEM_RAM_GB + "G" + " -jar " + GEM_JAR_PATH
+    cmd +=      " --t " + GEM_THREADS
+    cmd +=      " --q " + GEM_QVAL
+    cmd +=  " --k_min " + GEM_KMIN +  " --k_max " + GEM_KMAX
+    cmd +=      " --d " + gemReadDistFile  # readdist file / read distribution file
+    cmd +=      " --g " + chrSizesFile
+    cmd += " --genome " + genomeByChromFastaDir
+    cmd +=   " --expt " + expBam
+    cmd +=  (" --ctrl " + ctrlBam) if ctrlBam is not None else "" # can be omitted if there is NO input file
+    cmd += " --f SAM --sl --outBED "
+    cmd += " --out " + outdir # outprefix creates a new folder with this name, respecting existing subdirectories.
+    script_obj.append(cmd)
+
+    # should check to see if the expected output file is in here...
+
     return
 
 
@@ -639,34 +708,6 @@ die_if_file_missing <- function(f, ...) {
      return(invisible(TRUE));
 }
      
-get_exe_path <- function(exe_name, how_to_install=NULL) {
-     if (is.null(exe_name) || is.na(exe_name)) { return(NA); }
-     result = tryCatch({
-          exe_path <- system2("which", args=c(exe_name), stdout=T);
-     }, error = function(e) {
-          exe_path <- NULL # failure
-     })
-     if (length(exe_path) == 0 || is.na(exe_path) || is.null(exe_path) || !file.exists(exe_path)) {
-          errlog("Failure to find the required executable named: ", exe_name)
-          if (!is.null(how_to_install)) { errlog("You may be able to install it as follows:\n", how_to_install) }
-     }
-     return(exe_path)
-}
-
-write_global_errors_to_file <- function(filename) {
-     # We have stored all the problems encountered into a list of strings named "GLOBAL_ERR" (global variable)
-     # Now we will write all of these to a file.
-     fileConn <- file(filename, open="w") # write to new file
-     writeLines(GLOBAL_ERR, fileConn)
-     close(fileConn)
-     return(invisible(NULL))
-}
-
-remember_exid_failure <- function(exid_that_failed, comment="") {
-     FAILED_IDS[[exid]] <<- comment # GLOBAL VARIABLE
-     errlog("[", exid, " ERROR]: ", comment)
-     return(invisible(NULL))
-}
 
 
 get_java_and_jar_path <- function(jar_full_path, gigabytes_ram) {
@@ -747,7 +788,6 @@ GLOBAL_QSUB_COUNT <- 1 #
 GLOBAL_QSUB_PREFIX <- format(Sys.time(), "%d_%H:%M:%S") # should be something unique to each run of this program
 
 B2FRAME            <- "This_is_a_B2B_Data_Frame_Type" # just some text to use for sanity checking inputs later
-GEM_READ_DIST_FILE <- file.path(BASEDIR, "DataFiles/Read_Distribution_default.txt")
 COUNT_DIR          <- file.path(BASEDIR, "D5_htseq_count")
 OUT_EDGER_DIR      <- file.path(BASEDIR, "E1_rnaseq_edger_diff_expr")
 OUT_GEM_DIR        <- file.path(BASEDIR, "F1a_chipseq_gem")
@@ -1143,113 +1183,6 @@ agw_handle_chip_peak_calls <- function(exid, sid, species, df_for_this_exid, cmd
      append_commands(cmdfile, agw_construct_cmd(peak_call_cmd)                , commented_out=should_comment_out_since_outputs_exist)
 }
 
-# =====================  DONE WITH FUNCTION DEFINITIONS ==========================
-
-#MARK_DUP_JAR = "/data/applications/picard/picard-tools-1.114/MarkDuplicates.jar";
-if (opt$type %in% c("CHIP")) {
-     BAM_DIR     <- file.path(BASEDIR, "D2b_bowtie_output")
-     ALIGNED_DIR <- file.path(getwd(), "D2b_bowtie_output")
-     ALIGNER     <- "bowtie2"
-} else if (opt$type %in% c("RNA")) {
-     BAM_DIR     <- file.path(BASEDIR, "D2a_tophat_output")
-     ALIGNED_DIR <- file.path(getwd(), "D2a_tophat_output")
-     ALIGNER     <- "tophat"
-} else {
-     stop(paste0("invalid assay type. On the command line, the assay type was specified as '--type=", opt$type, "' -- however, the only valid types currently are 'RNA' and 'CHIP'. Please specify one of those valid options!"))
-}
-
-alldat      <- read_sample_info_from_file(opt$info)
-#for (exid in "24R") { # unique(dat[,"exid"])) {
-counter <- 0
-max_counter <- length(get_unique_experiment_ids_from_b2frame(alldat))
-for (exid in get_unique_experiment_ids_from_b2frame(alldat)) {
-     counter <- counter+1
-
-     file_safe_exid    <- make.names(gsub("[:;, ]", "_", exid)) # make this exid safe for use in a filename
-     zero_padded_count <- sprintf(paste0("%0", floor(log10(max_counter)+1),"d"), counter) # <-- try to calculate the right number of zeros to pad with. e.g. if the max is "999", then pad to a total of at least 3 digits (001, 002, etc...)
-     xout              <- paste0(opt$out, ".", zero_padded_count, ".", file_safe_exid, ".cmd.txt")     # <-- the output filename
-
-     clear_file(xout) # Clear out the output file before we write to it, in case it already exists...
-     append_commands(xout, paste0("echo 'Handling the experiment ID ", file_safe_exid, "'. This file contains the commands for ONLY that specific experiment ID"))
-     
-     subdat                      <- get_b2frame_for_exid_from_b2frame(alldat, exid)
-     sample_ids_for_exid.vec     <- get_sids_for_exid_from_b2frame(df=subdat, experiment_id=exid)
-     species                     <- get_species_from_b2frame(subdat)
-     cerr("Handling experiment ", exid, " (", species, "). The full set of data for this experiment is:"); cerr(subdat)
-     f1.vec <- subdat[["file1"]]
-     f2.vec <- subdat[["file2"]]
-
-     # Handle the alignments
-     for (ridx in seq_along(rownames(subdat))) {
-          item      <- rownames(subdat)[ridx] # item name (unique)
-          exid      <- subdat[ridx,    "exid"]  # experiment ID (shared)
-          file1     <- subdat[ridx,   "file1"]  # pair 1 for paired-end
-          file2     <- subdat[ridx,   "file2"]  # pair 2 for paired-end
-          aligner   <- ALIGNER
-          paired1   <- file.path(BASEDIR, file1)
-          paired2   <- if (is.nothing(file2)) { NULL } else { file.path(BASEDIR, file2) }
-          outdir    <- file.path(ALIGNED_DIR, exid, item)
-          align_cmd <- agw_align(exid=exid, fq1=paired1, fq2=paired2, outdir=outdir, aligner=aligner)
-          append_commands(xout, align_cmd) # align it!
-     }
-     
-     exid_is_missing_a_sample <- FALSE
-     
-     if (SHOULD_USE_FAKE_SIMULATED_DATA) {
-          warning("Note: using FAKE SIMULATED data!")
-          count_filenames.vec <- paste("FAKE.", seq_along(f1.vec), ".counts.tmp", sep='')
-          for (f in count_filenames.vec) {
-               # Making a fake simulated file now!
-               n <- 300 # <-- number of fake genes
-               v <- as.integer(floor(rexp(n, 0.01) + 1))
-               df <- data.frame(v)
-               rownames(df) <- paste("ENSFAKE_", seq(from=1, to=n), sep="")
-               write.table(df, file=f, col.names=FALSE, quote=FALSE, row.names=T, sep="\t")
-          }
-     } else {
-          count_filenames.vec <- c() # Get real data
-          for (sid in sample_ids_for_exid.vec) {
-               bam <- agw_get_bam_path(experiment_id=exid, sample_id=sid)
-               if (!file.nonzero.exists(bam)) {
-                    errlog("[", exid, " FAILURE]: [MISSING BAM FILE in experiment ID ", exid, ", sample ID ", sid, ". Specifically, file <", bam, "> does not exist.")
-                    exid_is_missing_a_sample <- TRUE
-               } else {
-                    if      (opt$type %in% c("RNA") ) { agw_handle_rna_counting_per_feature(exid=exid, sid=sid, species=species,                          cmdfile=xout) }
-                    else if (opt$type %in% c("CHIP")) {          agw_handle_chip_peak_calls(exid=exid, sid=sid, species=species, df_for_this_exid=subdat, cmdfile=xout) }
-                    else                              { stop(paste0("Unrecognized assay type, specifically: ", opt$type)) }
-               }
-          }
-          if (exid_is_missing_a_sample) {
-               remember_exid_failure(exid, paste0("[SKIPPING all remaining analysis steps for experiment ID ", exid, " due to a missing file issue earlier. See the logs for the exact sample ID that was missing."))
-          } else {
-               if (opt$type == "RNASEQ") {
-                    agw_handle_rna_diff_expression(exid, sid, subdat, outdir=file.path(OUT_EDGER_DIR, exid), cmdfile=xout)
-               }
-          }
-          #browser()
-     }
-}
-
-write_global_errors_to_file(filename=ERR_LOG_FILE)
-
-if (length(GLOBAL_ERR) > 0) {
-     cerr("[ERROR] We encountered the following ", length(GLOBAL_ERR), " error messages:")
-     cerr(paste(GLOBAL_ERR, collapse="\n"))
-     cerr("---------------")
-}
-if (length(FAILED_IDS) > 0) {
-     cerr("[ERROR] Failure for the following ", length(FAILED_IDS), " experiment IDs:")
-     cerr(paste(names(FAILED_IDS), collapse=", "))
- } else {
-     cerr("[OK] Commands were successfully written for every ID.")
-}
-cerr("[OK] with the following ", length(OK_IDS), " experiment IDs:")
-cerr(paste(names(OK_IDS), collapse=", "))
-cerr("---------------")
-
-
-cerr("You should see a bunch of output files with the following prefix/path (one file per experiment):")
-cerr("      Look for files matching this pattern ---> ls ", opt$out, "*")
 
 
 '''
