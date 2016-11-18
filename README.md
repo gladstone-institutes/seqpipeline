@@ -1,13 +1,41 @@
-# seqpipeline
+# seqpipeline (pipeline.py)
 
 This is bioinformatics sequence-analysis pipelining software.
 
-Currently, it is written entirely in R.
+Currently, it is written in python, with a single R script to handle 'edgeR' differential expression.
 
-This is located at https://github.com/gladstone-institutes/seqpipeline
+The code is located at https://github.com/gladstone-institutes/seqpipeline
+
+# How to run it:
+
+1) Make a new directory where you're going to run everything.
+2) Download the test data (FASTQ reads) from http://gb.ucsf.edu/bio/public/kp-600/test_data/
+      * There are six of these files.
+3) Put that test FASTQ data into a new folder named 'test_data'
+4) You can now run one of the commands in the 'Makefile' for this project, which at the moment has two options:
+     * test_2groups
+     * test_3groups
+5) If you run "make test_2groups", pipeline.py will be run and will generate an output file named 'script_test.sh'
+6) You can then invoke that script by running "bash script_test.sh". That is how you actually run all the bioinformatics tools.
+
+# Example command:
+
+    python2  ./pipeline.py --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" \
+                --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" \
+		--experiment-id="Test_3_Compare" \
+		--sample-ids="X1,X2,Y1,Y2,Z3A,Z3B" \
+		--groups="1,1,2,2,3,3" \
+		--rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz,a3.mm9.chr19.fq.gz,b3.mm9.chr19.fq.gz \
+		--species=mm9  --script="script_3_compare_test.sh"
 
 
-Required software:
+# To-do:
+
+Currently, only RNA-seq has been properly debugged in the updated 'pipeline.py' program.
+
+=========================================
+
+# Required software:
 Tophat (splice-aware aligner)
 *     Executable name: tophat (version 2.1.1)
      *     To install: See details at: http://ccb.jhu.edu/software/tophat/index.shtml

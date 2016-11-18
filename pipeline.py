@@ -17,10 +17,6 @@ import pdb #pdb.set_trace() ## Python Debugger! See: http://aymanh.com/python-de
 import os.path
 import argparse # requires python 2.7
 
-ASSAY_RNA  = 1
-ASSAY_CHIP = 2
-
-
 global_file_paths_we_already_aligned = dict()
 global_num_script_files_written = 0
 global_annot = dict()
@@ -42,6 +38,13 @@ GEM_JAR_PATH            = "/data/applications/2015_06/bin/gem.jar" # peak caller
 JAVA_PATH               = "java" # needed for GEM.jar
 BCP_PATH                = "BCP_HM" # peak caller, good on broad peaks
 
+DEFAULT_ALIGN_BOWTIE_DIR    = "Pipeline_01b_Align_Bowtie_Dir"
+DEFAULT_ALIGN_TOPHAT_DIR    = "Pipeline_01t_Align_Tophat_Dir"
+DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
+DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
+DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_GEM_Peak_Dir"
+DEFAULT_GEM_PEAK_DIR        = "Pipeline_05g_BCP_Peak_Dir"
+
 GEM_DEFAULT_READ_DIST_FILE = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/A-2016-08-August/github_seqpipeline/resources/GEM_Read_Distribution_default.txt"
 GEM_RAM_GB        = 25  # in gigabytes. Sometimes crashes if it's < 10
 
@@ -55,18 +58,12 @@ SAMTOOLS_N_THREADS = BOWTIE_N_THREADS
 EXIT_CODE_IF_MISSING_FILE        = 49   # just some arbitrary non-zero exit code number
 LITERAL_BACKSLASH                = "\\" # <-- reduces to just one backslash
 LITERAL_DQUOTE                   = "\""
-
-DEFAULT_OUTPUT_BASEDIR      = "./"
-DEFAULT_ALIGN_BOWTIE_DIR    = "Pipeline_01b_Align_Bowtie_Dir"
-DEFAULT_ALIGN_TOPHAT_DIR    = "Pipeline_01t_Align_Tophat_Dir"
-DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
-DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
-DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_GEM_Peak_Dir"
-DEFAULT_GEM_PEAK_DIR        = "Pipeline_05g_BCP_Peak_Dir"
-
+ASSAY_RNA  = 1
+ASSAY_CHIP = 2
+DEFAULT_OUTPUT_BASEDIR         = "./"
 DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script also changes.
 
-opt = None # <-- "opt" is a global variable that stores the cmd line arguments. This should really be the ONLY non-constant global!
+opt = None # <-- "opt" is a global variable that stores the cmd line options. This should really be the ONLY non-constant global!
 
 def enquote(s):
     # should we check to see if s has quotes in it already?
@@ -279,14 +276,14 @@ Version history: (none yet)
 
     xcmd = OurScript()
 
-    base_bam_subdirectory_only = DEFAULT_ALIGN_TOPHAT_DIR if (assay == ASSAY_RNA) else DEFAULT_ALIGN_BOWTIE_DIR
+    base_bam_subdirectory_only = DEFAULT_ALIGN_TOPHAT_DIR if (assay == ASSAY_RNA) else DEFAULT_ALIGN_BOWTIE_DIR # this changes based on whether we're using Tophat or Bowtie
 
-    eee = Experiment(expName="Experiment_placeholder_ID", species=opt.species, sid_list=sample_id_list
-                     , fq1_list=samp1, fq2_list=samp2
-                     , inp1_list=inp1, inp2_list=inp2
-                     ,   base_bam_dir=pathWithBase(opt.outdir, base_bam_subdirectory_only)
-                     , base_count_dir=pathWithBase(opt.outdir, DEFAULT_HTSEQ_COUNT_DIR)
-                     , base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR)
+    eee = Experiment(expName=opt.exper_id, species=opt.species, sid_list=sample_id_list
+                     , fq1_list=samp1, fq2_list=samp2 # Normal fastq files for the samples
+                     , inp1_list=inp1, inp2_list=inp2 # Inputs for ChIPseq
+                     ,      base_bam_dir=pathWithBase(opt.outdir, base_bam_subdirectory_only)
+                     ,    base_count_dir=pathWithBase(opt.outdir, DEFAULT_HTSEQ_COUNT_DIR)
+                     ,    base_edger_dir=pathWithBase(opt.outdir, DEFAULT_EDGER_DIFF_EXPR_DIR)
                      , base_bcp_peak_dir=pathWithBase(opt.outdir, DEFAULT_BCP_PEAK_DIR)
                      , base_gem_peak_dir=pathWithBase(opt.outdir, DEFAULT_GEM_PEAK_DIR)
                  )
@@ -313,25 +310,29 @@ Version history: (none yet)
 def assertType(x, ok_types, none_ok=False):
     if none_ok and x is None:
         return # this is ok!
-
     if (not isinstance(ok_types, (tuple, type))):
         raise Exception("The 'ok_types' argument must be a 'tuple' or a 'type'.")
     # Require that everything in the list_of_things is one of the "ok_types"
     xAssert(isinstance(x, ok_types), "We were looking for one of these types: "+str(ok_types)+", but instead we got a "+str(type(x))+"")
 
 def withoutNone(aaa):
-    if aaa is None:
+    if aaa is None: # turn a 'None' input into an empty list
         aaa = []
-    return [x for x in aaa if x is not None] # remove NONE elements
-
+    return [x for x in aaa if x is not None] # remove any 'None' elements from the list
 
 def maybeNoneDict(keys, values):
     if values is None:
-        return dict.fromkeys(keys) # values are all NONE if a single "none" was passed in
+        return dict.fromkeys(keys) # keys are normal, but values are all 'None' if a single "none" was passed in as 'values'
     else:
-        return dict(zip(keys, values))
+        return dict(zip(keys, values)) # just normally initialize a python dictionary with keys & matching values
+
+
 
 class Experiment(object):
+    '''A class that keeps track of all our samples for an experiment.
+    This is the class that can answer questions like "what are the FASTQ files associated with a specific sample?"
+    Also this is where we remember all the sample names.
+    This is basically where ALL THE DATA about an experiment is stored.'''
     def __init__(self, expName, species, sid_list, fq1_list, fq2_list, inp1_list, inp2_list, base_bam_dir, base_count_dir, base_edger_dir, base_bcp_peak_dir, base_gem_peak_dir):
         xAssert(isinstance(sid_list, (list, tuple)))
         xAssert(isinstance(expName, (str)))
