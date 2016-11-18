@@ -17,6 +17,8 @@ The code is located at https://github.com/gladstone-institutes/seqpipeline
      * test_3groups
 5. If you run "make test_2groups", pipeline.py will be run and will generate an output file named 'script_test.sh'
 6. You can then invoke that script by running "bash script_test.sh". That is how you actually run all the bioinformatics tools.
+7. Finally, if you ran one of the 'make test_2groups' or 'make test_3groups' commands above, you can compare your output to the reference output in the "test_data" directory, for example: [2-group edgeR output.txt](https://github.com/gladstone-institutes/seqpipeline/blob/master/test_data/edgeR_reference_output_for_2group_comparison.tab.txt)
+
 
 # Example command:
 
