@@ -8,15 +8,15 @@ The code is located at https://github.com/gladstone-institutes/seqpipeline
 
 # How to run it:
 
-1) Make a new directory where you're going to run everything.
-2) Download the test data (FASTQ reads) from http://gb.ucsf.edu/bio/public/kp-600/test_data/
+1. Make a new directory where you're going to run everything.
+2. Download the test data (FASTQ reads) from http://gb.ucsf.edu/bio/public/kp-600/test_data/
       * There are six of these files.
-3) Put that test FASTQ data into a new folder named 'test_data'
-4) You can now run one of the commands in the 'Makefile' for this project, which at the moment has two options:
+3. Put that test FASTQ data into a new folder named 'test_data'
+4. You can now run one of the commands in the 'Makefile' for this project, which at the moment has two options:
      * test_2groups
      * test_3groups
-5) If you run "make test_2groups", pipeline.py will be run and will generate an output file named 'script_test.sh'
-6) You can then invoke that script by running "bash script_test.sh". That is how you actually run all the bioinformatics tools.
+5. If you run "make test_2groups", pipeline.py will be run and will generate an output file named 'script_test.sh'
+6. You can then invoke that script by running "bash script_test.sh". That is how you actually run all the bioinformatics tools.
 
 # Example command:
 
