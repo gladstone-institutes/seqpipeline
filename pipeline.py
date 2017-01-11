@@ -42,7 +42,6 @@ GEM_JAR_PATH            = "/data/applications/2015_06/bin/gem.jar" # peak caller
 BCP_PATH                = "BCP_HM" # Peak caller, good on broad peaks. Not the best for motifs, but still pretty good (see Reuben et al's paper)
 JAVA_PATH               = "java" # needed for GEM.jar, the GEM ChIP peak calling program. GEM is best at narrow peaks with particular sequence motifs.
 
-
 DEFAULT_ALIGN_BOWTIE_DIR    = "Pipeline_01b_Align_Bowtie_Dir"
 DEFAULT_ALIGN_TOPHAT_DIR    = "Pipeline_01t_Align_Tophat_Dir"
 DEFAULT_HTSEQ_COUNT_DIR     = "Pipeline_02_HTSeq_Count_Dir"
@@ -51,6 +50,8 @@ DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_GEM_Peak_Dir"
 DEFAULT_GEM_PEAK_DIR        = "Pipeline_05g_BCP_Peak_Dir"
 
 GEM_READ_DIST_FILE = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/A-2016-08-August/github_seqpipeline/resources/GEM_Read_Distribution_default.txt"
+print("Warning: note that the gem read distribution file is a HARD CODED file path right now!")
+
 GEM_RAM_GB        = 25  # in gigabytes. Sometimes crashes if it's < 10
 
 TOPHAT_N_THREADS   = 4 # Somewhat arbitrary
@@ -67,6 +68,9 @@ ASSAY_RNA  = 1 # <-- Arbitrary. could theoretically be an Enum
 ASSAY_CHIP = 2
 DEFAULT_OUTPUT_BASEDIR         = "./" # write files to the current directory if no one says otherwise
 DELIM_FOR_ARGS_TO_EDGER_SCRIPT = ',' # should be a comma normally. Do not change this unless the edgeR R script (WHICH IS A SEPARATE FILE!!!!) also changes. Do not change this without changing the R file too!
+
+
+
 
 opt = None # <-- "opt" is a global variable that stores the cmd line options. This should really be the ONLY non-constant global!
 
@@ -111,24 +115,24 @@ def splitFileList(string_of_files, delim, basedir=None):
 def getListItemUnlessNone(theList, index):
     return None if (theList is None) else theList[index]
 
-def tar_up_that_annotation():
-    '''Just a function for generating the list of files to be tarred up, if we want to send this annotation to someone else. Not really production-ready code here!'''
-    for assembly in global_annot:
-        a = getAnnot(assembly)
-        for subitem in a:
-            path = a[subitem]
-            if subitem == 'bowtie_index':
-                path += "*.bt2"
-                pass
-            else:
-                if not (os.path.isfile(path) or os.path.isdir(path)):
-                    print("**WARNING**: file or path above does not appear to exist! (This one: " + path + ")")
-                    pass
-                pass
-            print(path)
-            pass
-        pass
-    return
+#def tar_up_that_annotation():
+#    '''Just a function for generating the list of files to be tarred up, if we want to send this annotation to someone else. Not really production-ready code here!'''
+#    for assembly in global_annot:
+#        a = getAnnot(assembly)
+#        for subitem in a:
+#            path = a[subitem]
+#            if subitem == 'bowtie_index':
+#                path += "*.bt2"
+#                pass
+#            else:
+#                if not (os.path.isfile(path) or os.path.isdir(path) or os.path.isfile(path + ".1.bt2")):
+#                    print("**WARNING**: file or path above does not appear to exist! (This one: " + path + ")")
+#                    pass
+#                pass
+#            print(path)
+#            pass
+#        pass
+#    return
 
 def dieBadArgs(errMsg):
     sys.exit("ERROR: Problem with the command line arguments! Specifically: " + errMsg + ". Try using '--help' to see all the possible arguments.")
@@ -160,9 +164,12 @@ Important caveats to be aware of:
    * You will need to specify FULL PATHS to everything if you are planning on running the output script on a **cluster**!
 
 2) You run a command line invocation like:
+
+     RNA-SEQ example:
      python2  pipeline.py  --script="script_test.sh" --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" --experiment-id="Test_Experiment" --sample-ids="A1,A2,B1,B2" --rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz --groups=1,1,2,2 --species=mm9
         * Note that ***FULL PATHS** for 'outdir' and 'basedir' are specified since this example is for a cluster.
 
+     ChIP-SEQ example:
 python2  pipeline.py \\
 --script="chip_test.sh" \\
  --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" \\
@@ -195,7 +202,7 @@ Version history: (none yet)
 
     # Check for certain files that are maybe-required first...
     for fff in [EDGER_SCRIPT, GEM_JAR_PATH, global_annot['hg19'], global_annot['mm9'], global_annot['danRer7'], global_annot['galGal4'] ]:
-        if not os.path.isfile(fff):
+        if not (os.path.isfile(fff) or os.path.isfile(fff + ".1.bt2")):
             print("**WARNING**: Note that we can't seem to find the following (probably hard-coded) path <" + fff + ">. Probably this is because it's HARD CODED on the filesystem right now!")
             #sys.sleep(1)
             pass
@@ -363,6 +370,7 @@ class Experiment(object):
         self.base_bam_dir   = base_bam_dir
         self.base_count_dir = base_count_dir
         self.base_edger_dir = base_edger_dir
+        self.base_gem_peak_dir = base_gem_peak_dir
         pass
 
     def sampleHasChIPControl(self, sampName):
@@ -420,9 +428,8 @@ class Experiment(object):
     def getGemPeakDir(self, sampName): # returns: string (single full file path)
         return os.path.join(self.base_gem_peak_dir, self.expName, sampName)
 
-    def getGemPeakFile(self, sampName): # returns: string (single full file path)
-        return os.path.join(self.getGemPeakDir(sampName), "gem_result.htm")
-
+    def getGemOutHTMLFile(self, sampName): # returns: string (single full file path)
+        return os.path.join(self.getGemPeakDir(sampName), sampName + "_result.htm")
 
 
 #class ExperimentHolder(object):
@@ -555,15 +562,10 @@ def handleCHIP(groups, script_obj, exper):
     # Peak calling...
     for sampName in exper.getSampleNames():
         peakCaller = GEM_JAR_PATH
-        if peakCaller == GEM_JAR_PATH:
-            generateGemPeakCmd(species=exper.getSpeciesForSample(sampName), outdir=exper.getGemPeakDir(sampName), expBam=exper.getAlignedBamForSample(sampName), ctrlBam=exper.getAlignedChIPControlBamForSample(sampName), script_obj=script_obj)
-            pass
-        elif peakCaller == BCP_PATH:
-            generateBcpPeakCmd(species=exper.getSpeciesForSample(sampName), outdir=exper.getBcpPeakDir(sampName), expBam=exper.getAlignedBamForSample(sampName), ctrlBam=exper.getAlignedChIPControlBamForSample(sampName), gemReadDistFile=GEM_READ_DIST_FILE, script_obj=script_obj)
-            pass
-        else:
-            raise Exception("Programming bug -- unsupported peak caller")
-            pass
+        print("WARNING: peak-caller is currently hard-coded to use GEM!!!")
+        if peakCaller == GEM_JAR_PATH: generateGemPeakCmd(exper=exper, sampName=sampName, script_obj=script_obj)
+        elif peakCaller == BCP_PATH:   generateBcpPeakCmd(species=exper.getSpeciesForSample(sampName), outdir=exper.getBcpPeakDir(sampName), expBam=exper.getAlignedBamForSample(sampName), ctrlBam=exper.getAlignedChIPControlBamForSample(sampName), script_obj=script_obj, sampName=sampName)
+        else:                          raise Exception("Programming bug -- unsupported peak caller")
         pass
 
     return
@@ -596,9 +598,14 @@ def generateBcpPeakCmd(species, outdir, expBam, ctrlBam, script_obj):
     script_obj.append("exit(1); # Not set up yet... error")
     return
 
-def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script_obj):
+def generateGemPeakCmd(exper, sampName, script_obj):
     '''Gem is best for TF-related peaks (ones with sequence motifs)'''
-
+    species         = exper.getSpeciesForSample(sampName)
+    outdir          = exper.getGemPeakDir(sampName)
+    expBam          = exper.getAlignedBamForSample(sampName)
+    ctrlBam         = exper.getAlignedChIPControlBamForSample(sampName)
+    gemReadDistFile = GEM_READ_DIST_FILE
+    
     GEM_THREADS      = 1 # gem uses a ton of threads for some reason, so 1 is even conservative
     GEM_QVAL         = 2	      # sets the q-value threshold (-log10, so 2 = 0.01)
     GEM_KMIN         = 6	      # minimum kmer length. From our default UCSF settings used in the 'Monkey' pipeline
@@ -606,10 +613,10 @@ def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script
     genomeByChromFastaDir = getAnnot(species, "fa_by_chrom")
     chrSizesFile          = getAnnot(species, "chr_sizes")
 
-    cmd  = JAVA_PATH + " -Xmx" + GEM_RAM_GB + "G" + " -jar " + GEM_JAR_PATH
-    cmd +=      " --t " + GEM_THREADS
-    cmd +=      " --q " + GEM_QVAL
-    cmd +=  " --k_min " + GEM_KMIN +  " --k_max " + GEM_KMAX
+    cmd  = JAVA_PATH + " -Xmx" + str(GEM_RAM_GB) + "G" + " -jar " + GEM_JAR_PATH
+    cmd +=      " --t " + str(GEM_THREADS)
+    cmd +=      " --q " + str(GEM_QVAL)
+    cmd +=  " --k_min " + str(GEM_KMIN) +  " --k_max " + str(GEM_KMAX)
     cmd +=      " --d " + gemReadDistFile  # readdist file / read distribution file
     cmd +=      " --g " + chrSizesFile
     cmd += " --genome " + genomeByChromFastaDir
@@ -618,11 +625,10 @@ def generateGemPeakCmd(species, outdir, expBam, ctrlBam, gemReadDistFile, script
     cmd += " --f SAM --sl --outBED "
     cmd += " --out " + outdir # outprefix creates a new folder with this name, respecting existing subdirectories.
 
-
-    outpeak = os.path.join(outdir, "some_file_generated_by_GEM") #TODO: fix this to be the actual file generated by gem
+    expectedOutFile = exper.getGemOutHTMLFile(sampName)
     script_obj.appendMkDir(outdir) # this directory must exist before we try moving any files to it...
     script_obj.appendCheckForRequiredFiles(file_list=[expBam, ctrlBam, chrSizesFile, genomeByChromFastaDir, gemReadDistFile])
-    script_obj.appendCommandUnlessFilesExist(check_files=[outpeak], cmd_if_files_missing=cmd, required_output=[outpeak])
+    script_obj.appendCommandUnlessFilesExist(check_files=[expectedOutFile], cmd_if_files_missing=cmd, required_output=[expectedOutFile])
 
     # see what files GEM generates!
     

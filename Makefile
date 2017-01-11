@@ -22,3 +22,15 @@ test_3groups:
 		--groups="1,1,2,2,3,3" \
 		--rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz,a3.mm9.chr19.fq.gz,b3.mm9.chr19.fq.gz \
 		--species=mm9  --script="script_3_compare_test.sh"
+
+test_chip:
+	python2  ./pipeline.py \
+--script="chip_test.sh" \
+ --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" \
+--basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" \
+--experiment-id="Test_Experiment_ChIP" \
+--sample-ids="ALPHA,BETA" \
+--groups=1,2 \
+--chip-samples=a1.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz \
+ --chip-inputs=a2.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz \
+--species=mm9
