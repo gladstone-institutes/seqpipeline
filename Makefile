@@ -23,14 +23,33 @@ test_3groups:
 		--rna-samples=a1.mm9.chr19.fq.gz,a2.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz,a3.mm9.chr19.fq.gz,b3.mm9.chr19.fq.gz \
 		--species=mm9  --script="script_3_compare_test.sh"
 
-test_chip:
+test_gem:
 	python2  ./pipeline.py \
---script="chip_test.sh" \
+--script="$@.sh" \
  --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" \
 --basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" \
 --experiment-id="Test_Experiment_ChIP" \
 --sample-ids="ALPHA,BETA" \
 --groups=1,2 \
+--peak-caller=GEM \
 --chip-samples=a1.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz \
  --chip-inputs=a2.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz \
 --species=mm9
+
+
+test_bcp:
+	python2  ./pipeline.py \
+--script="$@.sh" \
+ --outdir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/" \
+--basedir="/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/B-2016-11-November/test_data/" \
+--experiment-id="Test_Experiment_ChIP" \
+--sample-ids="ALPHA,BETA" \
+--groups=1,2 \
+--peak-caller=BCP \
+--chip-samples=a1.mm9.chr19.fq.gz,b1.mm9.chr19.fq.gz \
+ --chip-inputs=a2.mm9.chr19.fq.gz,b2.mm9.chr19.fq.gz \
+--species=mm9
+
+
+# Test BCP:
+#  BCP_HM -1 Pipeline_01b_Align_Bowtie_Dir/Test_Experiment_ChIP/BETA/accepted_hits.bam.converted_to.bed -2 Pipeline_01b_Align_Bowtie_Dir/Test_Experiment_ChIP/BETA_CHIP_CONTROL/accepted_hits.bam.converted_to.bed -f 2 -w 1 -p 1.1 -3 out.bed

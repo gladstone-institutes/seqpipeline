@@ -50,6 +50,9 @@ DEFAULT_EDGER_DIFF_EXPR_DIR = "Pipeline_03_EdgeR_Diff_Expr_Dir"
 DEFAULT_BCP_PEAK_DIR        = "Pipeline_05b_BCP_Peak_Dir"
 DEFAULT_GEM_PEAK_DIR        = "Pipeline_05g_GEM_Peak_Dir"
 
+CHIP_BCP_STR = "BCP"
+CHIP_GEM_STR = "GEM"
+
 GEM_READ_DIST_FILE = "/data/projects/kp-600-b2b-osono-data-pipeline-run-feb-16/A-2016-08-August/github_seqpipeline/resources/GEM_Read_Distribution_default.txt"
 print("Warning: note that the gem read distribution file is a HARD CODED file path right now!")
 
@@ -221,6 +224,7 @@ Version history: (none yet)
 
     parser.add_argument('--chip-samples', '--c1', type=str, default=None, dest='chip_samples', help="ChIP-seq only: Specify ChIP-seq sample files, comma-delimited. Must match the order of the corresponding --chip_inputs files!")
     parser.add_argument('--chip-inputs' , '--p1', type=str, default=None, dest='chip_inputs', help="ChIP-seq only: Specify ChIP-seq input files, comma-delimited. Must match the order of the corresponding --chip_samples files!")
+    parser.add_argument('--peak-caller' , '--pc', type=str, default=None, dest='peak_caller', help="ChIP-seq only: Specify which peak caller to use. Must be either 'gem' or 'bcp' (case-insensitive). No default.!")
     parser.add_argument('--rna-samples', '--r1', type=str, default=None, dest='rna_samples', help="RNA-seq only: Specify RNA-seq input files, comma-delimited.")
 
     parser.add_argument('--sample-mates', '--c2', '--r2', type=str, default=None, dest='sample_mates', help="The mate pair associatd with either the CHIP or RNA samples. Comma-delimited just like the normal samples. Example: --r1=DrugX.fq,DrugY.fq --r2=DrugXpair2.fq,DrugYpair2.fq")
@@ -318,7 +322,8 @@ Version history: (none yet)
         handleRNA(groups=groups, script_obj=xcmd, exper=eee)
     elif assay == ASSAY_CHIP:
         xcmd.append("###### Handling ChIP-seq here ")
-        handleCHIP(groups=groups, script_obj=xcmd, exper=eee)
+        argAssert(opt.peak_caller is not None and opt.peak_caller.upper() in ("BCP", "GEM"), "If you are running chIP-seq peak calls, then be sure to specify the peak caller as either BCP or GEM, using --peak-caller=BCP or --peak-caller=GEM .")
+        handleCHIP(groups=groups, script_obj=xcmd, exper=eee, caller=opt.peak_caller)
     else:
         sys.exit("Something went wrong (programming bug)---this assay type is not recognized!")
         pass
@@ -536,8 +541,9 @@ def handleRNA(groups, script_obj, exper):
     generateEdgeRCmd(count_files=exper.getAllCountFiles(), groups=groups, outdir=exper.getEdgeRDiffExprDir(), outfile=exper.getEdgeRDiffExprFile(), script_obj=script_obj) # Note: this will call a custom edgeR script, which is also in this same repository.
     return
 
-def handleCHIP(groups, script_obj, exper):
+def handleCHIP(groups, script_obj, exper, caller=None):
     # Alignment...
+    assertType(caller, str)
     for sampName in exper.getSampleNames():
         species = exper.getSpeciesForSample(sampName)
 
@@ -553,10 +559,8 @@ def handleCHIP(groups, script_obj, exper):
 
     # Peak calling...
     for sampName in exper.getSampleNames():
-        peakCaller = BCP_HM_PATH
-        print("WARNING: peak-caller is currently hard-coded to use only one of GEM/BCP, it doesn't automatically select the most appropriate one!!!")
-        if peakCaller == GEM_JAR_PATH:  generateGemPeakCmd(exper=exper, sampName=sampName, script_obj=script_obj)
-        elif peakCaller == BCP_HM_PATH: generateBcpPeakCmd(exper=exper, sampName=sampName, script_obj=script_obj)
+        if caller.upper() == CHIP_GEM_STR.upper():  generateGemPeakCmd(exper=exper, sampName=sampName, script_obj=script_obj)
+        elif caller.upper() == CHIP_BCP_STR.upper(): generateBcpPeakCmd(exper=exper, sampName=sampName, script_obj=script_obj)
         else:                          raise Exception("Programming bug -- unsupported peak caller")
         pass
 
@@ -689,7 +693,8 @@ def generateGemPeakCmd(exper, sampName, script_obj):
     cmd += " --genome " + genomeByChromFastaDir
     cmd +=   " --expt " + expBam
     cmd +=  (" --ctrl " + ctrlBam) if ctrlBam is not None else "" # can be omitted if there is NO input file
-    cmd += " --f SAM --sl --outBED "
+    cmd += " --f SAM " # <-- "SAM" is required in order to accept SAM or BAM files, otherwise BED files are the default
+    cmd += " --sl --outBED "
     cmd += " --out " + outdir # outprefix creates a new folder with this name, respecting existing subdirectories.
 
     expectedOutFile = exper.getGemOutHTMLFile(sampName)
